@@ -35,6 +35,10 @@ Replacement references will be used by default by all Git commands
 except those doing reachability traversal (prune, pack transfer and
 fsck).
 
+That is, whenever git would normally go into its object store to
+find <object>, it will instead return the information pointed to
+by <replacement>.
+
 It is possible to disable use of replacement references for any
 command using the `--no-replace-objects` option just after 'git'.
 
