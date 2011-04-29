@@ -39,6 +39,32 @@ That is, whenever git would normally go into its object store to
 find <object>, it will instead return the information pointed to
 by <replacement>.
 
+Thus for example, if we have
+
+------------
+	A--B
+
+	C
+------------
+
+then running
+
+------------------------------------------------
+$ git replace A C
+------------------------------------------------
+
+will result in an apparent history
+
+------------
+	C--B
+------------
+
+This history can then be permanently fixed (with all SHAs updated)
+by using 'git filter-branch'.  Thus, replacement can operate
+similarly to grafts, the difference being that grafting
+(apparently) creates an additional reference, while replacing
+(apparently) alters a reference.
+
 It is possible to disable use of replacement references for any
 command using the `--no-replace-objects` option just after 'git'.
 
