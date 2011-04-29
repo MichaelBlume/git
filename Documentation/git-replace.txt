@@ -65,6 +65,10 @@ similarly to grafts, the difference being that grafting
 (apparently) creates an additional reference, while replacing
 (apparently) alters a reference.
 
+Note that replacement is not limited to commit references, and can
+be used to alter file or tree references throughout the history
+of a project.
+
 It is possible to disable use of replacement references for any
 command using the `--no-replace-objects` option just after 'git'.
 
