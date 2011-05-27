@@ -409,6 +409,7 @@ static void show_html_page(const char *git_cmd)
 static const char *check_git_cmd(const char* cmd)
 {
 	char *alias;
+  int i = 0;
 
 	if (is_git_command(cmd))
 		return cmd;
@@ -426,7 +427,7 @@ static const char *check_git_cmd(const char* cmd)
 		 * alias for a shell command, just print the alias
 		 * definition.
 		 */
-		if (!exclude_guides || alias[0] == '!') {
+		if (alias[0] == '!') {
 			printf_ln(_("'%s' is aliased to '%s'"), cmd, alias);
 			free(alias);
 			exit(0);
