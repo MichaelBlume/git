@@ -83,6 +83,16 @@ test_expect_success 'edit existing notes' '
 	test_must_fail git notes show HEAD^
 '
 
+test_expect_success 'show notes from treeish' '
+	test "b3" = "$(git notes --ref commits^{tree} show)" &&
+	test "b4" = "$(git notes --ref commits@{1} show)"
+'
+
+test_expect_success 'cannot edit notes from non-ref' '
+	test_must_fail git notes --ref commits^{tree} edit &&
+	test_must_fail git notes --ref commits@{1} edit
+'
+
 test_expect_success 'cannot "git notes add -m" where notes already exists' '
 	test_must_fail git notes add -m "b2" &&
 	test_path_is_missing .git/NOTES_EDITMSG &&
@@ -658,7 +668,7 @@ test_expect_success '--show-notes=* adds to GIT_NOTES_DISPLAY_REF' '
 '
 
 test_expect_success '--no-standard-notes' '
-	cat >expect-commits <<EOF
+	cat >expect-commits <<-EOF &&
 		commit 2c125331118caba0ff8238b7f4958ac6e93fe39c
 		Author: A U Thor <author@example.com>
 		Date:   Thu Apr 7 15:18:13 2005 -0700
@@ -1120,6 +1130,12 @@ test_expect_success 'GIT_NOTES_REWRITE_REF overrides config' '
 test_expect_success 'git notes copy diagnoses too many or too few parameters' '
 	test_must_fail git notes copy &&
 	test_must_fail git notes copy one two three
+'
+
+test_expect_success 'git notes get-ref expands refs/heads/master to refs/notes/refs/heads/master' '
+	test_unconfig core.notesRef &&
+	sane_unset GIT_NOTES_REF &&
+	test "$(git notes --ref=refs/heads/master get-ref)" = "refs/notes/refs/heads/master"
 '
 
 test_expect_success 'git notes get-ref (no overrides)' '

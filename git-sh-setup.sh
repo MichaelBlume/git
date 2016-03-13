@@ -81,7 +81,7 @@ if test -n "$OPTIONS_SPEC"; then
 		echo exit $?
 	)"
 else
-	dashless=$(basename "$0" | sed -e 's/-/ /')
+	dashless=$(basename -- "$0" | sed -e 's/-/ /')
 	usage() {
 		die "usage: $dashless $USAGE"
 	}
@@ -344,7 +344,7 @@ git_dir_init () {
 		echo >&2 "Unable to determine absolute path of git directory"
 		exit 1
 	}
-	: ${GIT_OBJECT_DIRECTORY="$GIT_DIR/objects"}
+	: ${GIT_OBJECT_DIRECTORY="$(git rev-parse --git-path objects)"}
 }
 
 if test -z "$NONGIT_OK"

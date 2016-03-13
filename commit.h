@@ -59,7 +59,11 @@ struct commit *lookup_commit_reference_by_name(const char *name);
 struct commit *lookup_commit_or_die(const unsigned char *sha1, const char *ref_name);
 
 int parse_commit_buffer(struct commit *item, const void *buffer, unsigned long size);
-int parse_commit(struct commit *item);
+int parse_commit_gently(struct commit *item, int quiet_on_missing);
+static inline int parse_commit(struct commit *item)
+{
+	return parse_commit_gently(item, 0);
+}
 void parse_commit_or_die(struct commit *item);
 
 /*
@@ -141,7 +145,7 @@ struct pretty_print_context {
 	const char *subject;
 	const char *after_subject;
 	int preserve_subject;
-	enum date_mode date_mode;
+	struct date_mode date_mode;
 	unsigned date_mode_explicit:1;
 	int need_8bit_cte;
 	char *notes_message;
@@ -226,9 +230,9 @@ enum rev_sort_order {
 void sort_in_topological_order(struct commit_list **, enum rev_sort_order);
 
 struct commit_graft {
-	unsigned char sha1[20];
+	struct object_id oid;
 	int nr_parent; /* < 0 if shallow commit */
-	unsigned char parent[FLEX_ARRAY][20]; /* more */
+	struct object_id parent[FLEX_ARRAY]; /* more */
 };
 typedef int (*each_commit_graft_fn)(const struct commit_graft *, void *);
 
@@ -236,9 +240,12 @@ struct commit_graft *read_graft_line(char *buf, int len);
 int register_commit_graft(struct commit_graft *, int);
 struct commit_graft *lookup_commit_graft(const unsigned char *sha1);
 
-extern struct commit_list *get_merge_bases(struct commit *rev1, struct commit *rev2, int cleanup);
-extern struct commit_list *get_merge_bases_many(struct commit *one, int n, struct commit **twos, int cleanup);
+extern struct commit_list *get_merge_bases(struct commit *rev1, struct commit *rev2);
+extern struct commit_list *get_merge_bases_many(struct commit *one, int n, struct commit **twos);
 extern struct commit_list *get_octopus_merge_bases(struct commit_list *in);
+
+/* To be used only when object flags after this call no longer matter */
+extern struct commit_list *get_merge_bases_many_dirty(struct commit *one, int n, struct commit **twos);
 
 /* largest positive number a signed 32-bit integer can contain */
 #define INFINITE_DEPTH 0x7fffffff
@@ -251,7 +258,6 @@ extern int for_each_commit_graft(each_commit_graft_fn, void *);
 extern int is_repository_shallow(void);
 extern struct commit_list *get_shallow_commits(struct object_array *heads,
 		int depth, int shallow_flag, int not_shallow_flag);
-extern void check_shallow_file_for_update(void);
 extern void set_alternate_shallow_file(const char *path, int override);
 extern int write_shallow_commits(struct strbuf *out, int use_pack_protocol,
 				 const struct sha1_array *extra);
@@ -337,6 +343,9 @@ extern void free_commit_extra_headers(struct commit_extra_header *extra);
 extern const char *find_commit_header(const char *msg, const char *key,
 				      size_t *out_len);
 
+/* Find the end of the log message, the right place for a new trailer. */
+extern int ignore_non_trailer(struct strbuf *sb);
+
 typedef void (*each_mergetag_fn)(struct commit *commit, struct commit_extra_header *extra,
 				 void *cb_data);
 
@@ -370,7 +379,7 @@ extern void print_commit_list(struct commit_list *list,
  * at all.  This may allocate memory for sig->gpg_output, sig->gpg_status,
  * sig->signer and sig->key.
  */
-extern void check_commit_signature(const struct commit *commit, struct signature_check *sigc);
+extern int check_commit_signature(const struct commit *commit, struct signature_check *sigc);
 
 int compare_commits_by_commit_date(const void *a_, const void *b_, void *unused);
 
