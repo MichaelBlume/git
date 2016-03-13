@@ -29,7 +29,7 @@ export svnrepo
 svnconf=$PWD/svnconf
 export svnconf
 
-"$PERL_PATH" -w -e "
+perl -w -e "
 use SVN::Core;
 use SVN::Repos;
 \$SVN::Core::VERSION gt '1.1.0' or exit(42);
@@ -146,9 +146,9 @@ stop_httpd () {
 }
 
 convert_to_rev_db () {
-	"$PERL_PATH" -w -- - "$@" <<\EOF
+	perl -w -- - "$@" <<\EOF
 use strict;
-@ARGV == 2 or die "Usage: convert_to_rev_db <input> <output>";
+@ARGV == 2 or die "usage: convert_to_rev_db <input> <output>";
 open my $wr, '+>', $ARGV[1] or die "$!: couldn't open: $ARGV[1]";
 open my $rd, '<', $ARGV[0] or die "$!: couldn't open: $ARGV[0]";
 my $size = (stat($rd))[7];
@@ -186,3 +186,15 @@ start_svnserve () {
              --listen-host 127.0.0.1 &
 }
 
+prepare_a_utf8_locale () {
+	a_utf8_locale=$(locale -a | sed -n '/\.[uU][tT][fF]-*8$/{
+	p
+	q
+}')
+	if test -n "$a_utf8_locale"
+	then
+		test_set_prereq UTF8
+	else
+		say "# UTF-8 locale not available, some tests are skipped"
+	fi
+}

@@ -47,7 +47,7 @@ test_fix () {
 	# find touched lines
 	$DIFF file target | sed -n -e "s/^> //p" >fixed
 
-	# the changed lines are all expeced to change
+	# the changed lines are all expected to change
 	fixed_cnt=$(wc -l <fixed)
 	case "$1" in
 	'') expect_cnt=$fixed_cnt ;;
@@ -99,9 +99,8 @@ test_expect_success 'whitespace=warn, default rule' '
 
 test_expect_success 'whitespace=error-all, default rule' '
 
-	apply_patch --whitespace=error-all && return 1
-	test -s target && return 1
-	: happy
+	test_must_fail apply_patch --whitespace=error-all &&
+	! test -s target
 
 '
 
@@ -484,6 +483,43 @@ test_expect_success 'same, but with CR-LF line endings && cr-at-eol unset' '
 
 	git apply --ignore-space-change --whitespace=fix patch &&
 	test_cmp one expect
+'
+
+test_expect_success 'whitespace=fix to expand' '
+	qz_to_tab_space >preimage <<-\EOF &&
+	QQa
+	QQb
+	QQc
+	ZZZZZZZZZZZZZZZZd
+	QQe
+	QQf
+	QQg
+	EOF
+	qz_to_tab_space >patch <<-\EOF &&
+	diff --git a/preimage b/preimage
+	--- a/preimage
+	+++ b/preimage
+	@@ -1,7 +1,6 @@
+	 QQa
+	 QQb
+	 QQc
+	-QQd
+	 QQe
+	 QQf
+	 QQg
+	EOF
+	git -c core.whitespace=tab-in-indent apply --whitespace=fix patch
+'
+
+test_expect_success 'whitespace check skipped for excluded paths' '
+	git config core.whitespace blank-at-eol &&
+	>used &&
+	>unused &&
+	git add used unused &&
+	echo "used" >used &&
+	echo "unused " >unused &&
+	git diff-files -p used unused >patch &&
+	git apply --include=used --stat --whitespace=error <patch
 '
 
 test_done

@@ -4,15 +4,21 @@ test_description=clone
 
 . ./test-lib.sh
 
+X=
+test_have_prereq !MINGW || X=.exe
+
 test_expect_success setup '
 
 	rm -fr .git &&
 	test_create_repo src &&
 	(
-		cd src
-		>file
-		git add file
-		git commit -m initial
+		cd src &&
+		>file &&
+		git add file &&
+		git commit -m initial &&
+		echo 1 >file &&
+		git add file &&
+		git commit -m updated
 	)
 
 '
@@ -33,7 +39,7 @@ test_expect_success 'clone with excess parameters (2)' '
 
 test_expect_success C_LOCALE_OUTPUT 'output from clone' '
 	rm -fr dst &&
-	git clone -n "file://$(pwd)/src" dst >output &&
+	git clone -n "file://$(pwd)/src" dst >output 2>&1 &&
 	test $(grep Clon output | wc -l) = 1
 '
 
@@ -62,6 +68,29 @@ test_expect_success 'clone respects GIT_WORK_TREE' '
 
 '
 
+test_expect_success 'clone from hooks' '
+
+	test_create_repo r0 &&
+	cd r0 &&
+	test_commit initial &&
+	cd .. &&
+	git init r1 &&
+	cd r1 &&
+	cat >.git/hooks/pre-commit <<-\EOF &&
+	#!/bin/sh
+	git clone ../r0 ../r2
+	exit 1
+	EOF
+	chmod u+x .git/hooks/pre-commit &&
+	: >file &&
+	git add file &&
+	test_must_fail git commit -m invoke-hook &&
+	cd .. &&
+	test_cmp r0/.git/HEAD r2/.git/HEAD &&
+	test_cmp r0/initial.t r2/initial.t
+
+'
+
 test_expect_success 'clone creates intermediate directories' '
 
 	git clone src long/path/to/dst &&
@@ -85,6 +114,26 @@ test_expect_success 'clone --mirror' '
 	test "+refs/*:refs/*" = "$FETCH" &&
 	MIRROR="$(cd mirror && git config --bool remote.origin.mirror)" &&
 	test "$MIRROR" = true
+
+'
+
+test_expect_success 'clone --mirror with detached HEAD' '
+
+	( cd src && git checkout HEAD^ && git rev-parse HEAD >../expected ) &&
+	git clone --mirror src mirror.detached &&
+	( cd src && git checkout - ) &&
+	GIT_DIR=mirror.detached git rev-parse HEAD >actual &&
+	test_cmp expected actual
+
+'
+
+test_expect_success 'clone --bare with detached HEAD' '
+
+	( cd src && git checkout HEAD^ && git rev-parse HEAD >../expected ) &&
+	git clone --bare src bare.detached &&
+	( cd src && git checkout - ) &&
+	GIT_DIR=bare.detached git rev-parse HEAD >actual &&
+	test_cmp expected actual
 
 '
 
@@ -198,7 +247,7 @@ test_expect_success 'clone separate gitdir' '
 '
 
 test_expect_success 'clone separate gitdir: output' '
-	echo "gitdir: `pwd`/realgitdir" >expected &&
+	echo "gitdir: $(pwd)/realgitdir" >expected &&
 	test_cmp expected dst/.git
 '
 
@@ -246,6 +295,233 @@ test_expect_success 'clone from original with relative alternate' '
 	echo ../../../src/.git/objects >nest/src-5/objects/info/alternates &&
 	git clone --bare nest/src-5 target-10 &&
 	grep /src/\\.git/objects target-10/objects/info/alternates
+'
+
+test_expect_success 'clone checking out a tag' '
+	git clone --branch=some-tag src dst.tag &&
+	GIT_DIR=src/.git git rev-parse some-tag >expected &&
+	test_cmp expected dst.tag/.git/HEAD &&
+	GIT_DIR=dst.tag/.git git config remote.origin.fetch >fetch.actual &&
+	echo "+refs/heads/*:refs/remotes/origin/*" >fetch.expected &&
+	test_cmp fetch.expected fetch.actual
+'
+
+setup_ssh_wrapper () {
+	test_expect_success 'setup ssh wrapper' '
+		cp "$GIT_BUILD_DIR/test-fake-ssh$X" \
+			"$TRASH_DIRECTORY/ssh-wrapper$X" &&
+		GIT_SSH="$TRASH_DIRECTORY/ssh-wrapper$X" &&
+		export GIT_SSH &&
+		export TRASH_DIRECTORY &&
+		>"$TRASH_DIRECTORY"/ssh-output
+	'
+}
+
+copy_ssh_wrapper_as () {
+	cp "$TRASH_DIRECTORY/ssh-wrapper$X" "${1%$X}$X" &&
+	GIT_SSH="${1%$X}$X" &&
+	export GIT_SSH
+}
+
+expect_ssh () {
+	test_when_finished '
+		(cd "$TRASH_DIRECTORY" && rm -f ssh-expect && >ssh-output)
+	' &&
+	{
+		case "$#" in
+		1)
+			;;
+		2)
+			echo "ssh: $1 git-upload-pack '$2'"
+			;;
+		3)
+			echo "ssh: $1 $2 git-upload-pack '$3'"
+			;;
+		*)
+			echo "ssh: $1 $2 git-upload-pack '$3' $4"
+		esac
+	} >"$TRASH_DIRECTORY/ssh-expect" &&
+	(cd "$TRASH_DIRECTORY" && test_cmp ssh-expect ssh-output)
+}
+
+setup_ssh_wrapper
+
+test_expect_success 'clone myhost:src uses ssh' '
+	git clone myhost:src ssh-clone &&
+	expect_ssh myhost src
+'
+
+test_expect_success !MINGW,!CYGWIN 'clone local path foo:bar' '
+	cp -R src "foo:bar" &&
+	git clone "foo:bar" foobar &&
+	expect_ssh none
+'
+
+test_expect_success 'bracketed hostnames are still ssh' '
+	git clone "[myhost:123]:src" ssh-bracket-clone &&
+	expect_ssh "-p 123" myhost src
+'
+
+test_expect_success 'uplink is not treated as putty' '
+	copy_ssh_wrapper_as "$TRASH_DIRECTORY/uplink" &&
+	git clone "[myhost:123]:src" ssh-bracket-clone-uplink &&
+	expect_ssh "-p 123" myhost src
+'
+
+test_expect_success 'plink is treated specially (as putty)' '
+	copy_ssh_wrapper_as "$TRASH_DIRECTORY/plink" &&
+	git clone "[myhost:123]:src" ssh-bracket-clone-plink-0 &&
+	expect_ssh "-P 123" myhost src
+'
+
+test_expect_success 'plink.exe is treated specially (as putty)' '
+	copy_ssh_wrapper_as "$TRASH_DIRECTORY/plink.exe" &&
+	git clone "[myhost:123]:src" ssh-bracket-clone-plink-1 &&
+	expect_ssh "-P 123" myhost src
+'
+
+test_expect_success 'tortoiseplink is like putty, with extra arguments' '
+	copy_ssh_wrapper_as "$TRASH_DIRECTORY/tortoiseplink" &&
+	git clone "[myhost:123]:src" ssh-bracket-clone-plink-2 &&
+	expect_ssh "-batch -P 123" myhost src
+'
+
+# Reset the GIT_SSH environment variable for clone tests.
+setup_ssh_wrapper
+
+counter=0
+# $1 url
+# $2 none|host
+# $3 path
+test_clone_url () {
+	counter=$(($counter + 1))
+	test_might_fail git clone "$1" tmp$counter &&
+	shift &&
+	expect_ssh "$@"
+}
+
+test_expect_success !MINGW 'clone c:temp is ssl' '
+	test_clone_url c:temp c temp
+'
+
+test_expect_success MINGW 'clone c:temp is dos drive' '
+	test_clone_url c:temp none
+'
+
+#ip v4
+for repo in rep rep/home/project 123
+do
+	test_expect_success "clone host:$repo" '
+		test_clone_url host:$repo host $repo
+	'
+done
+
+#ipv6
+for repo in rep rep/home/project 123
+do
+	test_expect_success "clone [::1]:$repo" '
+		test_clone_url [::1]:$repo ::1 "$repo"
+	'
+done
+#home directory
+test_expect_success "clone host:/~repo" '
+	test_clone_url host:/~repo host "~repo"
+'
+
+test_expect_success "clone [::1]:/~repo" '
+	test_clone_url [::1]:/~repo ::1 "~repo"
+'
+
+# Corner cases
+for url in foo/bar:baz [foo]bar/baz:qux [foo/bar]:baz
+do
+	test_expect_success "clone $url is not ssh" '
+		test_clone_url $url none
+	'
+done
+
+#with ssh:// scheme
+#ignore trailing colon
+for tcol in "" :
+do
+	test_expect_success "clone ssh://host.xz$tcol/home/user/repo" '
+		test_clone_url "ssh://host.xz$tcol/home/user/repo" host.xz /home/user/repo
+	'
+	# from home directory
+	test_expect_success "clone ssh://host.xz$tcol/~repo" '
+	test_clone_url "ssh://host.xz$tcol/~repo" host.xz "~repo"
+'
+done
+
+# with port number
+test_expect_success 'clone ssh://host.xz:22/home/user/repo' '
+	test_clone_url "ssh://host.xz:22/home/user/repo" "-p 22 host.xz" "/home/user/repo"
+'
+
+# from home directory with port number
+test_expect_success 'clone ssh://host.xz:22/~repo' '
+	test_clone_url "ssh://host.xz:22/~repo" "-p 22 host.xz" "~repo"
+'
+
+#IPv6
+for tuah in ::1 [::1] [::1]: user@::1 user@[::1] user@[::1]: [user@::1] [user@::1]:
+do
+	ehost=$(echo $tuah | sed -e "s/1]:/1]/ "| tr -d "[]")
+	test_expect_success "clone ssh://$tuah/home/user/repo" "
+	  test_clone_url ssh://$tuah/home/user/repo $ehost /home/user/repo
+	"
+done
+
+#IPv6 from home directory
+for tuah in ::1 [::1] user@::1 user@[::1] [user@::1]
+do
+	euah=$(echo $tuah | tr -d "[]")
+	test_expect_success "clone ssh://$tuah/~repo" "
+	  test_clone_url ssh://$tuah/~repo $euah '~repo'
+	"
+done
+
+#IPv6 with port number
+for tuah in [::1] user@[::1] [user@::1]
+do
+	euah=$(echo $tuah | tr -d "[]")
+	test_expect_success "clone ssh://$tuah:22/home/user/repo" "
+	  test_clone_url ssh://$tuah:22/home/user/repo '-p 22' $euah /home/user/repo
+	"
+done
+
+#IPv6 from home directory with port number
+for tuah in [::1] user@[::1] [user@::1]
+do
+	euah=$(echo $tuah | tr -d "[]")
+	test_expect_success "clone ssh://$tuah:22/~repo" "
+	  test_clone_url ssh://$tuah:22/~repo '-p 22' $euah '~repo'
+	"
+done
+
+test_expect_success 'clone from a repository with two identical branches' '
+
+	(
+		cd src &&
+		git checkout -b another master
+	) &&
+	git clone src target-11 &&
+	test "z$( cd target-11 && git symbolic-ref HEAD )" = zrefs/heads/another
+
+'
+
+test_expect_success 'shallow clone locally' '
+	git clone --depth=1 --no-local src ssrrcc &&
+	git clone ssrrcc ddsstt &&
+	test_cmp ssrrcc/.git/shallow ddsstt/.git/shallow &&
+	( cd ddsstt && git fsck )
+'
+
+test_expect_success 'GIT_TRACE_PACKFILE produces a usable pack' '
+	rm -rf dst.git &&
+	GIT_TRACE_PACKFILE=$PWD/tmp.pack git clone --no-local --bare src dst.git &&
+	git init --bare replay.git &&
+	git -C replay.git index-pack -v --stdin <tmp.pack
 '
 
 test_done

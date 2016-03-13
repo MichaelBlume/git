@@ -9,7 +9,7 @@ git-gc - Cleanup unnecessary files and optimize the local repository
 SYNOPSIS
 --------
 [verse]
-'git gc' [--aggressive] [--auto] [--quiet] [--prune=<date> | --no-prune]
+'git gc' [--aggressive] [--auto] [--quiet] [--prune=<date> | --no-prune] [--force]
 
 DESCRIPTION
 -----------
@@ -54,22 +54,30 @@ all loose objects are combined into a single pack using
 `git repack -d -l`.  Setting the value of `gc.auto` to 0
 disables automatic packing of loose objects.
 +
-If the number of packs exceeds the value of `gc.autopacklimit`,
+If the number of packs exceeds the value of `gc.autoPackLimit`,
 then existing packs (except those marked with a `.keep` file)
 are consolidated into a single pack by using the `-A` option of
-'git repack'. Setting `gc.autopacklimit` to 0 disables
+'git repack'. Setting `gc.autoPackLimit` to 0 disables
 automatic consolidation of packs.
 
 --prune=<date>::
 	Prune loose objects older than date (default is 2 weeks ago,
-	overridable by the config variable `gc.pruneExpire`).  This
-	option is on by default.
+	overridable by the config variable `gc.pruneExpire`).
+	--prune=all prunes loose objects regardless of their age (do
+	not use --prune=all unless you know exactly what you are doing.
+	Unless the repository is quiescent, you will lose newly created
+	objects that haven't been anchored with the refs and end up
+	corrupting your repository).  --prune is on by default.
 
 --no-prune::
 	Do not prune any loose objects.
 
 --quiet::
 	Suppress all progress reports.
+
+--force::
+	Force `git gc` to run even if there may be another `git gc`
+	instance running on this repository.
 
 Configuration
 -------------
@@ -84,7 +92,7 @@ The optional configuration variable 'gc.reflogExpireUnreachable'
 can be set to indicate how long historical reflog entries which
 are not part of the current branch should remain available in
 this repository.  These types of entries are generally created as
-a result of using `git commit \--amend` or `git rebase` and are the
+a result of using `git commit --amend` or `git rebase` and are the
 commits prior to the amend or rebase occurring.  Since these changes
 are not part of the current project most users will want to expire
 them sooner.  This option defaults to '30 days'.
@@ -96,18 +104,18 @@ branches:
 ------------
 [gc "refs/remotes/*"]
 	reflogExpire = never
-	reflogexpireUnreachable = 3 days
+	reflogExpireUnreachable = 3 days
 ------------
 
-The optional configuration variable 'gc.rerereresolved' indicates
+The optional configuration variable 'gc.rerereResolved' indicates
 how long records of conflicted merge you resolved earlier are
 kept.  This defaults to 60 days.
 
-The optional configuration variable 'gc.rerereunresolved' indicates
+The optional configuration variable 'gc.rerereUnresolved' indicates
 how long records of conflicted merge you have not resolved are
 kept.  This defaults to 15 days.
 
-The optional configuration variable 'gc.packrefs' determines if
+The optional configuration variable 'gc.packRefs' determines if
 'git gc' runs 'git pack-refs'. This can be set to "notbare" to enable
 it within all non-bare repos or it can be set to a boolean value.
 This defaults to true.
@@ -118,6 +126,9 @@ the repository when the --aggressive option is specified.  The larger
 the value, the more time is spent optimizing the delta compression.  See
 the documentation for the --window' option in linkgit:git-repack[1] for
 more details.  This defaults to 250.
+
+Similarly, the optional configuration variable 'gc.aggressiveDepth'
+controls --depth option in linkgit:git-repack[1]. This defaults to 250.
 
 The optional configuration variable 'gc.pruneExpire' controls how old
 the unreferenced loose objects have to be before they are pruned.  The

@@ -107,14 +107,14 @@ test_expect_success setup '
 +*++ [initial] Initial
 EOF
 
-V=`git version | sed -e 's/^git version //' -e 's/\./\\./g'`
+V=$(git version | sed -e 's/^git version //' -e 's/\./\\./g')
 while read cmd
 do
 	case "$cmd" in
 	'' | '#'*) continue ;;
 	esac
-	test=`echo "$cmd" | sed -e 's|[/ ][/ ]*|_|g'`
-	pfx=`printf "%04d" $test_count`
+	test=$(echo "$cmd" | sed -e 's|[/ ][/ ]*|_|g')
+	pfx=$(printf "%04d" $test_count)
 	expect="$TEST_DIRECTORY/t4013/diff.$test"
 	actual="$pfx-diff.$test"
 
@@ -128,7 +128,12 @@ do
 		} >"$actual" &&
 		if test -f "$expect"
 		then
-			test_cmp "$expect" "$actual" &&
+			case $cmd in
+			*format-patch* | *-stat*)
+				test_i18ncmp "$expect" "$actual";;
+			*)
+				test_cmp "$expect" "$actual";;
+			esac &&
 			rm -f "$actual"
 		else
 			# this is to help developing new tests.
@@ -317,6 +322,16 @@ test_expect_success 'diff --cached on unborn branch' '
 test_expect_success 'diff --cached -- file on unborn branch' '
 	git diff --cached -- file0 >result &&
 	test_cmp "$TEST_DIRECTORY/t4013/diff.diff_--cached_--_file0" result
+'
+
+test_expect_success 'diff-tree --stdin with log formatting' '
+	cat >expect <<-\EOF &&
+	Side
+	Third
+	Second
+	EOF
+	git rev-list master | git diff-tree --stdin --format=%s -s >actual &&
+	test_cmp expect actual
 '
 
 test_done

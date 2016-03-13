@@ -4,33 +4,20 @@
 
 --root::
 	Do not treat root commits as boundaries.  This can also be
-	controlled via the `blame.showroot` config option.
+	controlled via the `blame.showRoot` config option.
 
 --show-stats::
 	Include additional statistics at the end of blame output.
 
 -L <start>,<end>::
-	Annotate only the given line range.  <start> and <end> can take
-	one of these forms:
-
-	- number
+-L :<funcname>::
+	Annotate only the given line range. May be specified multiple times.
+	Overlapping ranges are allowed.
 +
-If <start> or <end> is a number, it specifies an
-absolute line number (lines count from 1).
+<start> and <end> are optional. ``-L <start>'' or ``-L <start>,'' spans from
+<start> to end of file. ``-L ,<end>'' spans from start of file to <end>.
 +
-
-- /regex/
-+
-This form will use the first line matching the given
-POSIX regex.  If <end> is a regex, it will search
-starting at the line given by <start>.
-+
-
-- +offset or -offset
-+
-This is only valid for <end> and will specify a number
-of lines before or after the line given by <start>.
-+
+include::line-range-format.txt[]
 
 -l::
 	Show long rev (Default: off).
@@ -76,12 +63,18 @@ of lines before or after the line given by <start>.
 	`-` to make the command read from the standard input).
 
 --date <format>::
-	The value is one of the following alternatives:
-	{relative,local,default,iso,rfc,short}. If --date is not
+	Specifies the format used to output dates. If --date is not
 	provided, the value of the blame.date config variable is
 	used. If the blame.date config variable is also not set, the
-	iso format is used. For more information, See the discussion
+	iso format is used. For supported values, see the discussion
 	of the --date option at linkgit:git-log[1].
+
+--[no-]progress::
+	Progress status is reported on the standard error stream
+	by default when it is attached to a terminal. This flag
+	enables progress reporting even if not attached to a
+	terminal. Can't use `--progress` together with `--porcelain`
+	or `--incremental`.
 
 -M|<num>|::
 	Detect moved or copied lines within a file. When a commit
@@ -95,7 +88,7 @@ of lines before or after the line given by <start>.
 	running extra passes of inspection.
 +
 <num> is optional but it is the lower bound on the number of
-alphanumeric characters that git must detect as moving/copying
+alphanumeric characters that Git must detect as moving/copying
 within a file for it to associate those lines with the parent
 commit. The default value is 20.
 
@@ -110,7 +103,7 @@ commit. The default value is 20.
 	looks for copies from other files in any commit.
 +
 <num> is optional but it is the lower bound on the number of
-alphanumeric characters that git must detect as moving/copying
+alphanumeric characters that Git must detect as moving/copying
 between files for it to associate those lines with the parent
 commit. And the default value is 40. If there are more than one
 `-C` options given, the <num> argument of the last `-C` will

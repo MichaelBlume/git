@@ -8,19 +8,19 @@ static int all_attrs;
 static int cached_attrs;
 static int stdin_paths;
 static const char * const check_attr_usage[] = {
-"git check-attr [-a | --all | attr...] [--] pathname...",
-"git check-attr --stdin [-a | --all | attr...] < <list-of-paths>",
+N_("git check-attr [-a | --all | <attr>...] [--] <pathname>..."),
+N_("git check-attr --stdin [-z] [-a | --all | <attr>...]"),
 NULL
 };
 
-static int null_term_line;
+static int nul_term_line;
 
 static const struct option check_attr_options[] = {
-	OPT_BOOLEAN('a', "all", &all_attrs, "report all attributes set on file"),
-	OPT_BOOLEAN(0,  "cached", &cached_attrs, "use .gitattributes only from the index"),
-	OPT_BOOLEAN(0 , "stdin", &stdin_paths, "read file names from stdin"),
-	OPT_BOOLEAN('z', NULL, &null_term_line,
-		"input paths are terminated by a null character"),
+	OPT_BOOL('a', "all", &all_attrs, N_("report all attributes set on file")),
+	OPT_BOOL(0,  "cached", &cached_attrs, N_("use .gitattributes only from the index")),
+	OPT_BOOL(0 , "stdin", &stdin_paths, N_("read file names from stdin")),
+	OPT_BOOL('z', NULL, &nul_term_line,
+		 N_("terminate input and output records by a NUL character")),
 	OPT_END()
 };
 
@@ -38,8 +38,16 @@ static void output_attr(int cnt, struct git_attr_check *check,
 		else if (ATTR_UNSET(value))
 			value = "unspecified";
 
-		quote_c_style(file, NULL, stdout, 0);
-		printf(": %s: %s\n", git_attr_name(check[j].attr), value);
+		if (nul_term_line) {
+			printf("%s%c" /* path */
+			       "%s%c" /* attrname */
+			       "%s%c" /* attrvalue */,
+			       file, 0, git_attr_name(check[j].attr), 0, value, 0);
+		} else {
+			quote_c_style(file, NULL, stdout, 0);
+			printf(": %s: %s\n", git_attr_name(check[j].attr), value);
+		}
+
 	}
 }
 
@@ -64,23 +72,23 @@ static void check_attr(const char *prefix, int cnt,
 static void check_attr_stdin_paths(const char *prefix, int cnt,
 	struct git_attr_check *check)
 {
-	struct strbuf buf, nbuf;
-	int line_termination = null_term_line ? 0 : '\n';
+	struct strbuf buf = STRBUF_INIT;
+	struct strbuf unquoted = STRBUF_INIT;
+	strbuf_getline_fn getline_fn;
 
-	strbuf_init(&buf, 0);
-	strbuf_init(&nbuf, 0);
-	while (strbuf_getline(&buf, stdin, line_termination) != EOF) {
-		if (line_termination && buf.buf[0] == '"') {
-			strbuf_reset(&nbuf);
-			if (unquote_c_style(&nbuf, buf.buf, NULL))
+	getline_fn = nul_term_line ? strbuf_getline_nul : strbuf_getline_lf;
+	while (getline_fn(&buf, stdin) != EOF) {
+		if (!nul_term_line && buf.buf[0] == '"') {
+			strbuf_reset(&unquoted);
+			if (unquote_c_style(&unquoted, buf.buf, NULL))
 				die("line is badly quoted");
-			strbuf_swap(&buf, &nbuf);
+			strbuf_swap(&buf, &unquoted);
 		}
 		check_attr(prefix, cnt, check, buf.buf);
 		maybe_flush_or_die(stdout, "attribute to stdout");
 	}
 	strbuf_release(&buf);
-	strbuf_release(&nbuf);
+	strbuf_release(&unquoted);
 }
 
 static NORETURN void error_with_usage(const char *msg)
@@ -93,6 +101,9 @@ int cmd_check_attr(int argc, const char **argv, const char *prefix)
 {
 	struct git_attr_check *check;
 	int cnt, i, doubledash, filei;
+
+	if (!is_bare_repository())
+		setup_work_tree();
 
 	git_config(git_default_config, NULL);
 

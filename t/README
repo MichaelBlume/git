@@ -71,11 +71,24 @@ You can pass --verbose (or -v), --debug (or -d), and --immediate
 (or -i) command line argument to the test, or by setting GIT_TEST_OPTS
 appropriately before running "make".
 
+-v::
 --verbose::
 	This makes the test more verbose.  Specifically, the
 	command being run and their output if any are also
 	output.
 
+--verbose-only=<pattern>::
+	Like --verbose, but the effect is limited to tests with
+	numbers matching <pattern>.  The number matched against is
+	simply the running count of the test within the file.
+
+-x::
+	Turn on shell tracing (i.e., `set -x`) during the tests
+	themselves. Implies `--verbose`. Note that this can cause
+	failures in some tests which redirect and test the
+	output of shell functions. Use with caution.
+
+-d::
 --debug::
 	This may help the person who is developing a new test.
 	It causes the command defined with test_debug to run.
@@ -84,30 +97,55 @@ appropriately before running "make".
 	failed tests so that you can inspect its contents after
 	the test finished.
 
+-i::
 --immediate::
 	This causes the test to immediately exit upon the first
-	failed test.
+	failed test. Cleanup commands requested with
+	test_when_finished are not executed if the test failed,
+	in order to keep the state for inspection by the tester
+	to diagnose the bug.
 
+-l::
 --long-tests::
 	This causes additional long-running tests to be run (where
 	available), for more exhaustive testing.
 
---valgrind::
-	Execute all Git binaries with valgrind and exit with status
-	126 on errors (just like regular tests, this will only stop
-	the test script when running under -i).  Valgrind errors
-	go to stderr, so you might want to pass the -v option, too.
+-r::
+--run=<test-selector>::
+	Run only the subset of tests indicated by
+	<test-selector>.  See section "Skipping Tests" below for
+	<test-selector> syntax.
+
+--valgrind=<tool>::
+	Execute all Git binaries under valgrind tool <tool> and exit
+	with status 126 on errors (just like regular tests, this will
+	only stop the test script when running under -i).
 
 	Since it makes no sense to run the tests with --valgrind and
 	not see any output, this option implies --verbose.  For
 	convenience, it also implies --tee.
 
-	Note that valgrind is run with the option --leak-check=no,
+	<tool> defaults to 'memcheck', just like valgrind itself.
+	Other particularly useful choices include 'helgrind' and
+	'drd', but you may use any tool recognized by your valgrind
+	installation.
+
+	As a special case, <tool> can be 'memcheck-fast', which uses
+	memcheck but disables --track-origins.  Use this if you are
+	running tests in bulk, to see if there are _any_ memory
+	issues.
+
+	Note that memcheck is run with the option --leak-check=no,
 	as the git process is short-lived and some errors are not
 	interesting. In order to run a single command under the same
 	conditions manually, you should set GIT_VALGRIND to point to
 	the 't/valgrind/' directory and use the commands under
 	't/valgrind/bin/'.
+
+--valgrind-only=<pattern>::
+	Like --valgrind, but the effect is limited to tests with
+	numbers matching <pattern>.  The number matched against is
+	simply the running count of the test within the file.
 
 --tee::
 	In addition to printing the test output to the terminal,
@@ -129,6 +167,16 @@ appropriately before running "make".
 	testing under <directory>, instead of the t/ directory.
 	Using this option with a RAM-based filesystem (such as tmpfs)
 	can massively speed up the test suite.
+
+--chain-lint::
+--no-chain-lint::
+	If --chain-lint is enabled, the test harness will check each
+	test to make sure that it properly "&&-chains" all commands (so
+	that a failure in the middle does not go unnoticed by the final
+	exit code of the test). This check is performed in addition to
+	running the tests themselves. You may also enable or disable
+	this feature by setting the GIT_TEST_CHAIN_LINT environment
+	variable to "1" or "0", respectively.
 
 You can also set the GIT_TEST_INSTALLED environment variable to
 the bindir of an existing git installation to test that installation.
@@ -165,10 +213,77 @@ and either can match the "t[0-9]{4}" part to skip the whole
 test, or t[0-9]{4} followed by ".$number" to say which
 particular test to skip.
 
-Note that some tests in the existing test suite rely on previous
-test item, so you cannot arbitrarily disable one and expect the
-remainder of test to check what the test originally was intended
-to check.
+For an individual test suite --run could be used to specify that
+only some tests should be run or that some tests should be
+excluded from a run.
+
+The argument for --run is a list of individual test numbers or
+ranges with an optional negation prefix that define what tests in
+a test suite to include in the run.  A range is two numbers
+separated with a dash and matches a range of tests with both ends
+been included.  You may omit the first or the second number to
+mean "from the first test" or "up to the very last test"
+respectively.
+
+Optional prefix of '!' means that the test or a range of tests
+should be excluded from the run.
+
+If --run starts with an unprefixed number or range the initial
+set of tests to run is empty. If the first item starts with '!'
+all the tests are added to the initial set.  After initial set is
+determined every test number or range is added or excluded from
+the set one by one, from left to right.
+
+Individual numbers or ranges could be separated either by a space
+or a comma.
+
+For example, to run only tests up to a specific test (21), one
+could do this:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='1-21'
+
+or this:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='-21'
+
+Common case is to run several setup tests (1, 2, 3) and then a
+specific test (21) that relies on that setup:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='1 2 3 21'
+
+or:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run=1,2,3,21
+
+or:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='-3 21'
+
+As noted above, the test set is built going though items left to
+right, so this:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='1-4 !3'
+
+will run tests 1, 2, and 4.  Items that comes later have higher
+precendence.  It means that this:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='!3 1-4'
+
+would just run tests from 1 to 4, including 3.
+
+You may use negation with ranges.  The following will run all
+test in the test suite except from 7 up to 11:
+
+    $ sh ./t9200-git-cvsexport-commit.sh --run='!7-11'
+
+Some tests in a test suite rely on the previous tests performing
+certain actions, specifically some tests are designated as
+"setup" test, so you cannot _arbitrarily_ disable one test and
+expect the rest to function correctly.
+
+--run is mostly useful when you want to focus on a specific test
+and know what setup is needed for it.  Or when you want to run
+everything up to a certain test.
 
 
 Naming Tests
@@ -307,6 +422,33 @@ Don't:
    Use test_done instead if you need to stop the tests early (see
    "Skipping tests" below).
 
+ - use '! git cmd' when you want to make sure the git command exits
+   with failure in a controlled way by calling "die()".  Instead,
+   use 'test_must_fail git cmd'.  This will signal a failure if git
+   dies in an unexpected way (e.g. segfault).
+
+   On the other hand, don't use test_must_fail for running regular
+   platform commands; just use '! cmd'.  We are not in the business
+   of verifying that the world given to us sanely works.
+
+ - use perl without spelling it as "$PERL_PATH". This is to help our
+   friends on Windows where the platform Perl often adds CR before
+   the end of line, and they bundle Git with a version of Perl that
+   does not do so, whose path is specified with $PERL_PATH. Note that we
+   provide a "perl" function which uses $PERL_PATH under the hood, so
+   you do not need to worry when simply running perl in the test scripts
+   (but you do, for example, on a shebang line or in a sub script
+   created via "write_script").
+
+ - use sh without spelling it as "$SHELL_PATH", when the script can
+   be misinterpreted by broken platform shell (e.g. Solaris).
+
+ - chdir around in tests.  It is not sufficient to chdir to
+   somewhere and then chdir back to the original location later in
+   the test, as any intermediate step can fail and abort the test,
+   causing the next test to start in an unexpected directory.  Do so
+   inside a subshell if necessary.
+
  - Break the TAP output
 
    The raw output from your test may be interpreted by a TAP harness. TAP
@@ -342,9 +484,9 @@ If you need to skip tests you should do so by using the three-arg form
 of the test_* functions (see the "Test harness library" section
 below), e.g.:
 
-    test_expect_success PERL 'I need Perl' "
-        '$PERL_PATH' -e 'hlagh() if unf_unf()'
-    "
+    test_expect_success PERL 'I need Perl' '
+        perl -e "hlagh() if unf_unf()"
+    '
 
 The advantage of skipping tests like this is that platforms that don't
 have the PERL and other optional dependencies get an indication of how
@@ -421,6 +563,11 @@ library for your script to use.
    argument.  This is primarily meant for use during the
    development of a new test script.
 
+ - debug <git-command>
+
+   Run a git command inside a debugger. This is primarily meant for
+   use when debugging a failing test script.
+
  - test_done
 
    Your test script must have test_done at the end.  Its purpose
@@ -476,7 +623,7 @@ library for your script to use.
 
 	test_external \
 	    'GitwebCache::*FileCache*' \
-	    "$PERL_PATH" "$TEST_DIRECTORY"/t9503/test_cache_interface.pl
+	    perl "$TEST_DIRECTORY"/t9503/test_cache_interface.pl
 
    If the test is outputting its own TAP you should set the
    test_external_has_tap variable somewhere before calling the first
@@ -492,7 +639,7 @@ library for your script to use.
 
 	test_external_without_stderr \
 	    'Perl API' \
-	    "$PERL_PATH" "$TEST_DIRECTORY"/t9700/test.pl
+	    perl "$TEST_DIRECTORY"/t9700/test.pl
 
  - test_expect_code <exit-code> <command>
 
@@ -548,6 +695,54 @@ library for your script to use.
 		...
 	'
 
+ - test_write_lines <lines>
+
+   Write <lines> on standard output, one line per argument.
+   Useful to prepare multi-line files in a compact form.
+
+   Example:
+
+	test_write_lines a b c d e f g >foo
+
+   Is a more compact equivalent of:
+	cat >foo <<-EOF
+	a
+	b
+	c
+	d
+	e
+	f
+	g
+	EOF
+
+
+ - test_pause
+
+	This command is useful for writing and debugging tests and must be
+	removed before submitting. It halts the execution of the test and
+	spawns a shell in the trash directory. Exit the shell to continue
+	the test. Example:
+
+	test_expect_success 'test' '
+		git do-something >actual &&
+		test_pause &&
+		test_cmp expected actual
+	'
+
+ - test_ln_s_add <path1> <path2>
+
+   This function helps systems whose filesystem does not support symbolic
+   links. Use it to add a symbolic link entry to the index when it is not
+   important that the file system entry is a symbolic link, i.e., instead
+   of the sequence
+
+	ln -s foo bar &&
+	git add bar
+
+   Sometimes it is possible to split a test in a part that does not need
+   the symbolic link in the file system and a part that does; then only
+   the latter part need be protected by a SYMLINKS prerequisite (see below).
+
 Prerequisites
 -------------
 
@@ -558,11 +753,18 @@ See the prereq argument to the test_* functions in the "Test harness
 library" section above and the "test_have_prereq" function for how to
 use these, and "test_set_prereq" for how to define your own.
 
- - PERL & PYTHON
+ - PYTHON
 
-   Git wasn't compiled with NO_PERL=YesPlease or
-   NO_PYTHON=YesPlease. Wrap any tests that need Perl or Python in
-   these.
+   Git wasn't compiled with NO_PYTHON=YesPlease. Wrap any tests that
+   need Python with this.
+
+ - PERL
+
+   Git wasn't compiled with NO_PERL=YesPlease.
+
+   Even without the PERL prerequisite, tests can assume there is a
+   usable perl interpreter at $PERL_PATH, though it need not be
+   particularly modern.
 
  - POSIXPERM
 
@@ -578,6 +780,11 @@ use these, and "test_set_prereq" for how to define your own.
    The process retains the same pid across exec(2). See fb9a2bea for
    details.
 
+ - PIPE
+
+   The filesystem we're on supports creation of FIFOs (named pipes)
+   via mkfifo(1).
+
  - SYMLINKS
 
    The filesystem we're on supports symbolic links. E.g. a FAT
@@ -592,6 +799,15 @@ use these, and "test_set_prereq" for how to define your own.
 
    Git was compiled with USE_LIBPCRE=YesPlease. Wrap any tests
    that use git-grep --perl-regexp or git-grep -P in these.
+
+ - CASE_INSENSITIVE_FS
+
+   Test is run on a case insensitive file system.
+
+ - UTF8_NFD_TO_NFC
+
+   Test is run on a filesystem which converts decomposed utf-8 (nfd)
+   to precomposed utf-8 (nfc).
 
 Tips for Writing Tests
 ----------------------
@@ -658,76 +874,3 @@ Then, at the top-level:
 That'll generate a detailed cover report in the "cover_db_html"
 directory, which you can then copy to a webserver, or inspect locally
 in a browser.
-
-Smoke testing
--------------
-
-The Git test suite has support for smoke testing. Smoke testing is
-when you submit the results of a test run to a central server for
-analysis and aggregation.
-
-Running a smoke tester is an easy and valuable way of contributing to
-Git development, particularly if you have access to an uncommon OS on
-obscure hardware.
-
-After building Git you can generate a smoke report like this in the
-"t" directory:
-
-    make clean smoke
-
-You can also pass arguments via the environment. This should make it
-faster:
-
-    GIT_TEST_OPTS='--root=/dev/shm' TEST_JOBS=10 make clean smoke
-
-The "smoke" target will run the Git test suite with Perl's
-"TAP::Harness" module, and package up the results in a .tar.gz archive
-with "TAP::Harness::Archive". The former is included with Perl v5.10.1
-or later, but you'll need to install the latter from the CPAN. See the
-"Test coverage" section above for how you might do that.
-
-Once the "smoke" target finishes you'll see a message like this:
-
-    TAP Archive created at <path to git>/t/test-results/git-smoke.tar.gz
-
-To upload the smoke report you need to have curl(1) installed, then
-do:
-
-    make smoke_report
-
-To upload the report anonymously. Hopefully that'll return something
-like "Reported #7 added.".
-
-If you're going to be uploading reports frequently please request a
-user account by E-Mailing gitsmoke@v.nix.is. Once you have a username
-and password you'll be able to do:
-
-    SMOKE_USERNAME=<username> SMOKE_PASSWORD=<password> make smoke_report
-
-You can also add an additional comment to attach to the report, and/or
-a comma separated list of tags:
-
-    SMOKE_USERNAME=<username> SMOKE_PASSWORD=<password> \
-        SMOKE_COMMENT=<comment> SMOKE_TAGS=<tags> \
-        make smoke_report
-
-Once the report is uploaded it'll be made available at
-http://smoke.git.nix.is, here's an overview of Recent Smoke Reports
-for Git:
-
-    http://smoke.git.nix.is/app/projects/smoke_reports/1
-
-The reports will also be mirrored to GitHub every few hours:
-
-    http://github.com/gitsmoke/smoke-reports
-
-The Smolder SQLite database is also mirrored and made available for
-download:
-
-    http://github.com/gitsmoke/smoke-database
-
-Note that the database includes hashed (with crypt()) user passwords
-and E-Mail addresses. Don't use a valuable password for the smoke
-service if you have an account, or an E-Mail address you don't want to
-be publicly known. The user accounts are just meant to be convenient
-labels, they're not meant to be secure.

@@ -11,7 +11,7 @@ check_show() {
 	echo "$t -> $2" >expect
 	test_expect_${3:-success} "relative date ($2)" "
 	test-date show $t >actual &&
-	test_cmp expect actual
+	test_i18ncmp expect actual
 	"
 }
 
@@ -81,5 +81,8 @@ check_approxidate '06.05.2009' '2009-05-06 19:20:00'
 check_approxidate 'Jun 6, 5AM' '2009-06-06 05:00:00'
 check_approxidate '5AM Jun 6' '2009-06-06 05:00:00'
 check_approxidate '6AM, June 7, 2009' '2009-06-07 06:00:00'
+
+check_approxidate '2008-12-01' '2008-12-01 19:20:00'
+check_approxidate '2009-12-01' '2009-12-01 19:20:00'
 
 test_done

@@ -3,6 +3,7 @@
 test_description='checkout can handle submodules'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-submodule-update.sh
 
 test_expect_success 'setup' '
 	mkdir submodule &&
@@ -23,7 +24,7 @@ test_expect_success '"reset <submodule>" updates the index' '
 	git update-index --refresh &&
 	git diff-files --quiet &&
 	git diff-index --quiet --cached HEAD &&
-	test_must_fail git reset HEAD^ submodule &&
+	git reset HEAD^ submodule &&
 	test_must_fail git diff-files --quiet &&
 	git reset submodule &&
 	git diff-files --quiet
@@ -61,5 +62,9 @@ test_expect_success '"checkout <submodule>" honors submodule.*.ignore from .git/
 	git checkout HEAD >actual 2>&1 &&
 	! test -s actual
 '
+
+test_submodule_switch "git checkout"
+
+test_submodule_forced_switch "git checkout -f"
 
 test_done

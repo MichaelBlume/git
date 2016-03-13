@@ -263,10 +263,12 @@ proc commit_commitmsg {curHEAD msg_p} {
 	global is_detached repo_config
 	global pch_error
 
-	if {$is_detached && $repo_config(gui.warndetachedcommit)} {
+	if {$is_detached
+	    && ![file exists [gitdir rebase-merge head-name]]
+	    && 	[is_config_true gui.warndetachedcommit]} {
 		set msg [mc "You are about to commit on a detached head.\
 This is a potentially dangerous thing to do because if you switch\
-to another branch you will loose your changes and it can be difficult\
+to another branch you will lose your changes and it can be difficult\
 to retrieve them later from the reflog. You should probably cancel this\
 commit and create a new branch to continue.\n\
 \n\
@@ -407,6 +409,7 @@ A rescan will be automatically started now.
 	catch {file delete [gitdir MERGE_MSG]}
 	catch {file delete [gitdir SQUASH_MSG]}
 	catch {file delete [gitdir GITGUI_MSG]}
+	catch {file delete [gitdir CHERRY_PICK_HEAD]}
 
 	# -- Let rerere do its thing.
 	#

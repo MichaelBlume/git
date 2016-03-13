@@ -9,13 +9,15 @@ git-stripspace - Remove unnecessary whitespace
 SYNOPSIS
 --------
 [verse]
-'git stripspace' [-s | --strip-comments] < input
+'git stripspace' [-s | --strip-comments]
+'git stripspace' [-c | --comment-lines]
 
 DESCRIPTION
 -----------
 
-Clean the input in the manner used by 'git' for text such as commit
-messages, notes, tags and branch descriptions.
+Read text, such as commit messages, notes, tags and branch
+descriptions, from the standard input and clean it in the manner
+used by Git.
 
 With no arguments, this will:
 
@@ -35,14 +37,20 @@ OPTIONS
 -------
 -s::
 --strip-comments::
-	Skip and remove all lines starting with '#'.
+	Skip and remove all lines starting with comment character (default '#').
+
+-c::
+--comment-lines::
+	Prepend comment character and blank to each line. Lines will automatically
+	be terminated with a newline. On empty lines, only the comment character
+	will be prepended.
 
 EXAMPLES
 --------
 
 Given the following noisy input with '$' indicating the end of a line:
 
---------
+---------
 |A brief introduction   $
 |   $
 |$
@@ -58,7 +66,7 @@ Given the following noisy input with '$' indicating the end of a line:
 
 Use 'git stripspace' with no arguments to obtain:
 
---------
+---------
 |A brief introduction$
 |$
 |A new paragraph$
@@ -72,7 +80,7 @@ Use 'git stripspace' with no arguments to obtain:
 
 Use 'git stripspace --strip-comments' to obtain:
 
---------
+---------
 |A brief introduction$
 |$
 |A new paragraph$

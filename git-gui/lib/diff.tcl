@@ -1,6 +1,19 @@
 # git-gui diff viewer
 # Copyright (C) 2006, 2007 Shawn Pearce
 
+proc apply_tab_size {{firsttab {}}} {
+	global have_tk85 repo_config ui_diff
+
+	set w [font measure font_diff "0"]
+	if {$have_tk85 && $firsttab != 0} {
+		$ui_diff configure -tabs [list [expr {$firsttab * $w}] [expr {($firsttab + $repo_config(gui.tabsize)) * $w}]]
+	} elseif {$have_tk85 || $repo_config(gui.tabsize) != 8} {
+		$ui_diff configure -tabs [expr {$repo_config(gui.tabsize) * $w}]
+	} else {
+		$ui_diff configure -tabs {}
+	}
+}
+
 proc clear_diff {} {
 	global ui_diff current_diff_path current_diff_header
 	global ui_index ui_workdir
@@ -104,6 +117,8 @@ proc show_diff {path w {lno {}} {scroll_pos {}} {callback {}}} {
 	ui_status [mc "Loading diff of %s..." [escape_path $path]]
 
 	set cont_info [list $scroll_pos $callback]
+
+	apply_tab_size 0
 
 	if {[string first {U} $m] >= 0} {
 		merge_load_stages $path [list show_unmerged_diff $cont_info]
@@ -287,6 +302,9 @@ proc start_show_diff {cont_info {add_opts {}}} {
 	if {$w eq $ui_index} {
 		lappend cmd diff-index
 		lappend cmd --cached
+		if {[git-version >= "1.7.2"]} {
+			lappend cmd --ignore-submodules=dirty
+		}
 	} elseif {$w eq $ui_workdir} {
 		if {[string first {U} $m] >= 0} {
 			lappend cmd diff
@@ -309,6 +327,7 @@ proc start_show_diff {cont_info {add_opts {}}} {
 
 	lappend cmd -p
 	lappend cmd --color
+	set cmd [concat $cmd $repo_config(gui.diffopts)]
 	if {$repo_config(gui.diffcontext) >= 1} {
 		lappend cmd "-U$repo_config(gui.diffcontext)"
 	}
@@ -397,7 +416,10 @@ proc read_diff {fd conflict_size cont_info} {
 
 		# -- Automatically detect if this is a 3 way diff.
 		#
-		if {[string match {@@@ *} $line]} {set is_3way_diff 1}
+		if {[string match {@@@ *} $line]} {
+			set is_3way_diff 1
+			apply_tab_size 1
+		}
 
 		if {$::current_diff_inheader} {
 
@@ -502,9 +524,9 @@ proc read_diff {fd conflict_size cont_info} {
 
 		foreach {posbegin colbegin posend colend} $markup {
 			set prefix clr
-			foreach style [split $colbegin ";"] {
+			foreach style [lsort -integer [split $colbegin ";"]] {
 				if {$style eq "7"} {append prefix i; continue}
-				if {$style < 30 || $style > 47} {continue}
+				if {$style != 4 && ($style < 30 || $style > 47)} {continue}
 				set a "$mark linestart + $posbegin chars"
 				set b "$mark linestart + $posend chars"
 				catch {$ui_diff tag add $prefix$style $a $b}
@@ -763,8 +785,15 @@ proc apply_range_or_line {x y} {
 				# context line
 				set ln [$ui_diff get $i_l $next_l]
 				set patch "$patch$pre_context$ln"
-				set n [expr $n+1]
-				set m [expr $m+1]
+				# Skip the "\ No newline at end of
+				# file". Depending on the locale setting
+				# we don't know what this line looks
+				# like exactly. The only thing we do
+				# know is that it starts with "\ "
+				if {![string match {\\ *} $ln]} {
+					set n [expr $n+1]
+					set m [expr $m+1]
+				}
 				set pre_context {}
 			} elseif {$c1 eq $to_context} {
 				# turn change line into context line

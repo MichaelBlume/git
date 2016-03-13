@@ -17,6 +17,12 @@ BEGIN {
 use Cwd;
 use File::Basename;
 
+sub adjust_dirsep {
+	my $path = shift;
+	$path =~ s{\\}{/}g;
+	return $path;
+}
+
 BEGIN { use_ok('Git') }
 
 # set up
@@ -33,7 +39,7 @@ is($r->config_int("test.int"), 2048, "config_int: integer");
 is($r->config_int("test.nonexistent"), undef, "config_int: nonexistent");
 ok($r->config_bool("test.booltrue"), "config_bool: true");
 ok(!$r->config_bool("test.boolfalse"), "config_bool: false");
-is($r->config_path("test.path"), $r->config("test.pathexpanded"),
+is(adjust_dirsep($r->config_path("test.path")), $r->config("test.pathexpanded"),
    "config_path: ~/foo expansion");
 is_deeply([$r->config_path("test.pathmulti")], ["foo", "bar"],
    "config_path: multiple values");
@@ -45,9 +51,9 @@ is($r->get_color("color.test.slot1", "red"), $ansi_green, "get_color");
 # Failure cases for config:
 # Save and restore STDERR; we will probably extract this into a
 # "dies_ok" method and possibly move the STDERR handling to Git.pm.
-open our $tmpstderr, ">&STDERR" or die "cannot save STDERR"; close STDERR;
-eval { $r->config("test.dupstring") };
-ok($@, "config: duplicate entry in scalar context fails");
+open our $tmpstderr, ">&STDERR" or die "cannot save STDERR";
+open STDERR, ">", "/dev/null" or die "cannot redirect STDERR to /dev/null";
+is($r->config("test.dupstring"), "value2", "config: multivar");
 eval { $r->config_bool("test.boolother") };
 ok($@, "config_bool: non-boolean values fail");
 open STDERR, ">&", $tmpstderr or die "cannot restore STDERR";

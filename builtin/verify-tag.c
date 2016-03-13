@@ -11,53 +11,37 @@
 #include "run-command.h"
 #include <signal.h>
 #include "parse-options.h"
+#include "gpg-interface.h"
 
 static const char * const verify_tag_usage[] = {
-		"git verify-tag [-v|--verbose] <tag>...",
+		N_("git verify-tag [-v | --verbose] <tag>..."),
 		NULL
 };
 
-static int run_gpg_verify(const char *buf, unsigned long size, int verbose)
+static int run_gpg_verify(const char *buf, unsigned long size, unsigned flags)
 {
-	struct child_process gpg;
-	const char *args_gpg[] = {"gpg", "--verify", "FILE", "-", NULL};
-	char path[PATH_MAX];
-	size_t len;
-	int fd, ret;
+	struct signature_check sigc;
+	int len;
+	int ret;
 
-	fd = git_mkstemp(path, PATH_MAX, ".git_vtag_tmpXXXXXX");
-	if (fd < 0)
-		return error("could not create temporary file '%s': %s",
-						path, strerror(errno));
-	if (write_in_full(fd, buf, size) < 0)
-		return error("failed writing temporary file '%s': %s",
-						path, strerror(errno));
-	close(fd);
+	memset(&sigc, 0, sizeof(sigc));
 
-	/* find the length without signature */
 	len = parse_signature(buf, size);
-	if (verbose)
-		write_in_full(1, buf, len);
 
-	memset(&gpg, 0, sizeof(gpg));
-	gpg.argv = args_gpg;
-	gpg.in = -1;
-	args_gpg[2] = path;
-	if (start_command(&gpg)) {
-		unlink(path);
-		return error("could not run gpg.");
+	if (size == len) {
+		if (flags & GPG_VERIFY_VERBOSE)
+			write_in_full(1, buf, len);
+		return error("no signature found");
 	}
 
-	write_in_full(gpg.in, buf, len);
-	close(gpg.in);
-	ret = finish_command(&gpg);
+	ret = check_signature(buf, len, buf + len, size - len, &sigc);
+	print_signature_buffer(&sigc, flags);
 
-	unlink_or_warn(path);
-
+	signature_check_clear(&sigc);
 	return ret;
 }
 
-static int verify_tag(const char *name, int verbose)
+static int verify_tag(const char *name, unsigned flags)
 {
 	enum object_type type;
 	unsigned char sha1[20];
@@ -77,32 +61,45 @@ static int verify_tag(const char *name, int verbose)
 	if (!buf)
 		return error("%s: unable to read file.", name);
 
-	ret = run_gpg_verify(buf, size, verbose);
+	ret = run_gpg_verify(buf, size, flags);
 
 	free(buf);
 	return ret;
 }
 
+static int git_verify_tag_config(const char *var, const char *value, void *cb)
+{
+	int status = git_gpg_config(var, value, cb);
+	if (status)
+		return status;
+	return git_default_config(var, value, cb);
+}
+
 int cmd_verify_tag(int argc, const char **argv, const char *prefix)
 {
 	int i = 1, verbose = 0, had_error = 0;
+	unsigned flags = 0;
 	const struct option verify_tag_options[] = {
-		OPT__VERBOSE(&verbose, "print tag contents"),
+		OPT__VERBOSE(&verbose, N_("print tag contents")),
+		OPT_BIT(0, "raw", &flags, N_("print raw gpg status output"), GPG_VERIFY_RAW),
 		OPT_END()
 	};
 
-	git_config(git_default_config, NULL);
+	git_config(git_verify_tag_config, NULL);
 
 	argc = parse_options(argc, argv, prefix, verify_tag_options,
 			     verify_tag_usage, PARSE_OPT_KEEP_ARGV0);
 	if (argc <= i)
 		usage_with_options(verify_tag_usage, verify_tag_options);
 
+	if (verbose)
+		flags |= GPG_VERIFY_VERBOSE;
+
 	/* sometimes the program was terminated because this signal
 	 * was received in the process of writing the gpg input: */
 	signal(SIGPIPE, SIG_IGN);
 	while (i < argc)
-		if (verify_tag(argv[i++], verbose))
+		if (verify_tag(argv[i++], flags))
 			had_error = 1;
 	return had_error;
 }

@@ -30,7 +30,7 @@ test_expect_success 'two-way not clobbering' '
 
 	echo >file2 master creates untracked file2 &&
 	echo >subdir/file2 master creates untracked subdir/file2 &&
-	if err=`read_tree_u_must_succeed -m -u master side 2>&1`
+	if err=$(read_tree_u_must_succeed -m -u master side 2>&1)
 	then
 		echo should have complained
 		false
@@ -43,7 +43,7 @@ echo file2 >.gitignore
 
 test_expect_success 'two-way with incorrect --exclude-per-directory (1)' '
 
-	if err=`read_tree_u_must_succeed -m --exclude-per-directory=.gitignore master side 2>&1`
+	if err=$(read_tree_u_must_succeed -m --exclude-per-directory=.gitignore master side 2>&1)
 	then
 		echo should have complained
 		false
@@ -54,7 +54,7 @@ test_expect_success 'two-way with incorrect --exclude-per-directory (1)' '
 
 test_expect_success 'two-way with incorrect --exclude-per-directory (2)' '
 
-	if err=`read_tree_u_must_succeed -m -u --exclude-per-directory=foo --exclude-per-directory=.gitignore master side 2>&1`
+	if err=$(read_tree_u_must_succeed -m -u --exclude-per-directory=foo --exclude-per-directory=.gitignore master side 2>&1)
 	then
 		echo should have complained
 		false
@@ -95,7 +95,7 @@ test_expect_success 'three-way not clobbering a working tree file' '
 	git checkout master &&
 	echo >file3 file three created in master, untracked &&
 	echo >subdir/file3 file three created in master, untracked &&
-	if err=`read_tree_u_must_succeed -m -u branch-point master side 2>&1`
+	if err=$(read_tree_u_must_succeed -m -u branch-point master side 2>&1)
 	then
 		echo should have complained
 		false
@@ -158,7 +158,7 @@ test_expect_success '3-way not overwriting local changes (their side)' '
 
 '
 
-test_expect_success SYMLINKS 'funny symlink in work tree' '
+test_expect_success 'funny symlink in work tree' '
 
 	git reset --hard &&
 	git checkout -b sym-b side-b &&
@@ -170,15 +170,14 @@ test_expect_success SYMLINKS 'funny symlink in work tree' '
 	rm -fr a &&
 	git checkout -b sym-a side-a &&
 	mkdir -p a &&
-	ln -s ../b a/b &&
-	git add a/b &&
+	test_ln_s_add ../b a/b &&
 	git commit -m "we add a/b" &&
 
 	read_tree_u_must_succeed -m -u sym-a sym-a sym-b
 
 '
 
-test_expect_success SYMLINKS,SANITY 'funny symlink in work tree, un-unlink-able' '
+test_expect_success SANITY 'funny symlink in work tree, un-unlink-able' '
 
 	rm -fr a b &&
 	git reset --hard &&

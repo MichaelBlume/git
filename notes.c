@@ -303,7 +303,7 @@ static int note_tree_insert(struct notes_tree *t, struct int_node *tree,
 		free(entry);
 		return 0;
 	}
-	new_node = (struct int_node *) xcalloc(sizeof(struct int_node), 1);
+	new_node = (struct int_node *) xcalloc(1, sizeof(struct int_node));
 	ret = note_tree_insert(t, new_node, n + 1, l, GET_PTR_TYPE(*p),
 			       combine_notes);
 	if (ret)
@@ -362,13 +362,14 @@ static int non_note_cmp(const struct non_note *a, const struct non_note *b)
 	return strcmp(a->path, b->path);
 }
 
-static void add_non_note(struct notes_tree *t, const char *path,
+/* note: takes ownership of path string */
+static void add_non_note(struct notes_tree *t, char *path,
 		unsigned int mode, const unsigned char *sha1)
 {
 	struct non_note *p = t->prev_non_note, *n;
 	n = (struct non_note *) xmalloc(sizeof(struct non_note));
 	n->next = NULL;
-	n->path = xstrdup(path);
+	n->path = path;
 	n->mode = mode;
 	hashcpy(n->sha1, sha1);
 	t->prev_non_note = n;
@@ -443,7 +444,7 @@ static void load_subtree(struct notes_tree *t, struct leaf_node *subtree,
 		if (len <= 20) {
 			type = PTR_TYPE_NOTE;
 			l = (struct leaf_node *)
-				xcalloc(sizeof(struct leaf_node), 1);
+				xcalloc(1, sizeof(struct leaf_node));
 			hashcpy(l->key_sha1, object_sha1);
 			hashcpy(l->val_sha1, entry.sha1);
 			if (len < 20) {
@@ -482,17 +483,17 @@ handle_non_note:
 		 * component.
 		 */
 		{
-			char non_note_path[PATH_MAX];
-			char *p = non_note_path;
+			struct strbuf non_note_path = STRBUF_INIT;
 			const char *q = sha1_to_hex(subtree->key_sha1);
 			int i;
 			for (i = 0; i < prefix_len; i++) {
-				*p++ = *q++;
-				*p++ = *q++;
-				*p++ = '/';
+				strbuf_addch(&non_note_path, *q++);
+				strbuf_addch(&non_note_path, *q++);
+				strbuf_addch(&non_note_path, '/');
 			}
-			strcpy(p, entry.path);
-			add_non_note(t, non_note_path, entry.mode, entry.sha1);
+			strbuf_addstr(&non_note_path, entry.path);
+			add_non_note(t, strbuf_detach(&non_note_path, NULL),
+				     entry.mode, entry.sha1);
 		}
 	}
 	free(buf);
@@ -538,6 +539,9 @@ static unsigned char determine_fanout(struct int_node *tree, unsigned char n,
 	return fanout + 1;
 }
 
+/* hex SHA1 + 19 * '/' + NUL */
+#define FANOUT_PATH_MAX 40 + 19 + 1
+
 static void construct_path_with_fanout(const unsigned char *sha1,
 		unsigned char fanout, char *path)
 {
@@ -550,7 +554,7 @@ static void construct_path_with_fanout(const unsigned char *sha1,
 		path[i++] = '/';
 		fanout--;
 	}
-	strcpy(path + i, hex_sha1 + j);
+	xsnprintf(path + i, FANOUT_PATH_MAX - i, "%s", hex_sha1 + j);
 }
 
 static int for_each_note_helper(struct notes_tree *t, struct int_node *tree,
@@ -561,7 +565,7 @@ static int for_each_note_helper(struct notes_tree *t, struct int_node *tree,
 	void *p;
 	int ret = 0;
 	struct leaf_node *l;
-	static char path[40 + 19 + 1];  /* hex SHA1 + 19 * '/' + NUL */
+	static char path[FANOUT_PATH_MAX];
 
 	fanout = determine_fanout(tree, n, fanout);
 	for (i = 0; i < 16; i++) {
@@ -594,7 +598,7 @@ redo:
 				/* invoke callback with subtree */
 				unsigned int path_len =
 					l->key_sha1[19] * 2 + fanout;
-				assert(path_len < 40 + 19);
+				assert(path_len < FANOUT_PATH_MAX - 1);
 				construct_path_with_fanout(l->key_sha1, fanout,
 							   path);
 				/* Create trailing slash, if needed */
@@ -848,15 +852,16 @@ int combine_notes_ignore(unsigned char *cur_sha1,
 	return 0;
 }
 
-static int string_list_add_note_lines(struct string_list *sort_uniq_list,
+/*
+ * Add the lines from the named object to list, with trailing
+ * newlines removed.
+ */
+static int string_list_add_note_lines(struct string_list *list,
 				      const unsigned char *sha1)
 {
 	char *data;
 	unsigned long len;
 	enum object_type t;
-	struct strbuf buf = STRBUF_INIT;
-	struct strbuf **lines = NULL;
-	int i, list_index;
 
 	if (is_null_sha1(sha1))
 		return 0;
@@ -868,24 +873,14 @@ static int string_list_add_note_lines(struct string_list *sort_uniq_list,
 		return t != OBJ_BLOB || !data;
 	}
 
-	strbuf_attach(&buf, data, len, len + 1);
-	lines = strbuf_split(&buf, '\n');
-
-	for (i = 0; lines[i]; i++) {
-		if (lines[i]->buf[lines[i]->len - 1] == '\n')
-			strbuf_setlen(lines[i], lines[i]->len - 1);
-		if (!lines[i]->len)
-			continue; /* skip empty lines */
-		list_index = string_list_find_insert_index(sort_uniq_list,
-							   lines[i]->buf, 0);
-		if (list_index < 0)
-			continue; /* skip duplicate lines */
-		string_list_insert_at_index(sort_uniq_list, list_index,
-					    lines[i]->buf);
-	}
-
-	strbuf_list_free(lines);
-	strbuf_release(&buf);
+	/*
+	 * If the last line of the file is EOL-terminated, this will
+	 * add an empty string to the list.  But it will be removed
+	 * later, along with any empty strings that came from empty
+	 * lines within the file.
+	 */
+	string_list_split(list, data, '\n', -1);
+	free(data);
 	return 0;
 }
 
@@ -901,7 +896,7 @@ static int string_list_join_lines_helper(struct string_list_item *item,
 int combine_notes_cat_sort_uniq(unsigned char *cur_sha1,
 		const unsigned char *new_sha1)
 {
-	struct string_list sort_uniq_list = { NULL, 0, 0, 1 };
+	struct string_list sort_uniq_list = STRING_LIST_INIT_DUP;
 	struct strbuf buf = STRBUF_INIT;
 	int ret = 1;
 
@@ -910,6 +905,9 @@ int combine_notes_cat_sort_uniq(unsigned char *cur_sha1,
 		goto out;
 	if (string_list_add_note_lines(&sort_uniq_list, new_sha1))
 		goto out;
+	string_list_remove_empty_items(&sort_uniq_list, 0);
+	string_list_sort(&sort_uniq_list);
+	string_list_remove_duplicates(&sort_uniq_list, 0);
 
 	/* create a new blob object from sort_uniq_list */
 	if (for_each_string_list(&sort_uniq_list,
@@ -924,17 +922,21 @@ out:
 	return ret;
 }
 
-static int string_list_add_one_ref(const char *path, const unsigned char *sha1,
+static int string_list_add_one_ref(const char *refname, const struct object_id *oid,
 				   int flag, void *cb)
 {
 	struct string_list *refs = cb;
-	if (!unsorted_string_list_has_string(refs, path))
-		string_list_append(refs, path);
+	if (!unsorted_string_list_has_string(refs, refname))
+		string_list_append(refs, refname);
 	return 0;
 }
 
+/*
+ * The list argument must have strdup_strings set on it.
+ */
 void string_list_add_refs_by_glob(struct string_list *list, const char *glob)
 {
+	assert(list->strdup_strings);
 	if (has_glob_specials(glob)) {
 		for_each_glob_ref(string_list_add_one_ref, glob, list);
 	} else {
@@ -949,23 +951,18 @@ void string_list_add_refs_by_glob(struct string_list *list, const char *glob)
 void string_list_add_refs_from_colon_sep(struct string_list *list,
 					 const char *globs)
 {
-	struct strbuf globbuf = STRBUF_INIT;
-	struct strbuf **split;
+	struct string_list split = STRING_LIST_INIT_NODUP;
+	char *globs_copy = xstrdup(globs);
 	int i;
 
-	strbuf_addstr(&globbuf, globs);
-	split = strbuf_split(&globbuf, ':');
+	string_list_split_in_place(&split, globs_copy, ':', -1);
+	string_list_remove_empty_items(&split, 0);
 
-	for (i = 0; split[i]; i++) {
-		if (!split[i]->len)
-			continue;
-		if (split[i]->buf[split[i]->len-1] == ':')
-			strbuf_setlen(split[i], split[i]->len-1);
-		string_list_add_refs_by_glob(list, split[i]->buf);
-	}
+	for (i = 0; i < split.nr; i++)
+		string_list_add_refs_by_glob(list, split.items[i].string);
 
-	strbuf_list_free(split);
-	strbuf_release(&globbuf);
+	string_list_clear(&split, 0);
+	free(globs_copy);
 }
 
 static int notes_display_config(const char *k, const char *v, void *cb)
@@ -1010,17 +1007,20 @@ void init_notes(struct notes_tree *t, const char *notes_ref,
 	if (!combine_notes)
 		combine_notes = combine_notes_concatenate;
 
-	t->root = (struct int_node *) xcalloc(sizeof(struct int_node), 1);
+	t->root = (struct int_node *) xcalloc(1, sizeof(struct int_node));
 	t->first_non_note = NULL;
 	t->prev_non_note = NULL;
-	t->ref = notes_ref ? xstrdup(notes_ref) : NULL;
+	t->ref = xstrdup_or_null(notes_ref);
+	t->update_ref = (flags & NOTES_INIT_WRITABLE) ? t->ref : NULL;
 	t->combine_notes = combine_notes;
 	t->initialized = 1;
 	t->dirty = 0;
 
 	if (flags & NOTES_INIT_EMPTY || !notes_ref ||
-	    read_ref(notes_ref, object_sha1))
+	    get_sha1_treeish(notes_ref, object_sha1))
 		return;
+	if (flags & NOTES_INIT_WRITABLE && read_ref(notes_ref, object_sha1))
+		die("Cannot use notes ref %s", notes_ref);
 	if (get_tree_entry(object_sha1, "", sha1, &mode))
 		die("Failed to read notes tree referenced by %s (%s)",
 		    notes_ref, sha1_to_hex(object_sha1));
@@ -1030,15 +1030,15 @@ void init_notes(struct notes_tree *t, const char *notes_ref,
 	load_subtree(t, &root_tree, t->root, 0);
 }
 
-struct notes_tree **load_notes_trees(struct string_list *refs)
+struct notes_tree **load_notes_trees(struct string_list *refs, int flags)
 {
 	struct string_list_item *item;
 	int counter = 0;
 	struct notes_tree **trees;
-	trees = xmalloc((refs->nr+1) * sizeof(struct notes_tree *));
+	ALLOC_ARRAY(trees, refs->nr + 1);
 	for_each_string_list_item(item, refs) {
 		struct notes_tree *t = xcalloc(1, sizeof(struct notes_tree));
-		init_notes(t, item->string, combine_notes_ignore, 0);
+		init_notes(t, item->string, combine_notes_ignore, flags);
 		trees[counter++] = t;
 	}
 	trees[counter] = NULL;
@@ -1074,7 +1074,7 @@ void init_display_notes(struct display_notes_opt *opt)
 						     item->string);
 	}
 
-	display_notes_trees = load_notes_trees(&display_notes_refs);
+	display_notes_trees = load_notes_trees(&display_notes_refs, 0);
 	string_list_clear(&display_notes_refs, 0);
 }
 
@@ -1196,8 +1196,19 @@ void free_notes(struct notes_tree *t)
 	memset(t, 0, sizeof(struct notes_tree));
 }
 
-void format_note(struct notes_tree *t, const unsigned char *object_sha1,
-		struct strbuf *sb, const char *output_encoding, int flags)
+/*
+ * Fill the given strbuf with the notes associated with the given object.
+ *
+ * If the given notes_tree structure is not initialized, it will be auto-
+ * initialized to the default value (see documentation for init_notes() above).
+ * If the given notes_tree is NULL, the internal/default notes_tree will be
+ * used instead.
+ *
+ * (raw != 0) gives the %N userformat; otherwise, the note message is given
+ * for human consumption.
+ */
+static void format_note(struct notes_tree *t, const unsigned char *object_sha1,
+			struct strbuf *sb, const char *output_encoding, int raw)
 {
 	static const char utf8[] = "utf-8";
 	const unsigned char *sha1;
@@ -1214,14 +1225,13 @@ void format_note(struct notes_tree *t, const unsigned char *object_sha1,
 	if (!sha1)
 		return;
 
-	if (!(msg = read_sha1_file(sha1, &type, &msglen)) || !msglen ||
-			type != OBJ_BLOB) {
+	if (!(msg = read_sha1_file(sha1, &type, &msglen)) || type != OBJ_BLOB) {
 		free(msg);
 		return;
 	}
 
 	if (output_encoding && *output_encoding &&
-			strcmp(utf8, output_encoding)) {
+	    !is_encoding_utf8(output_encoding)) {
 		char *reencoded = reencode_string(msg, output_encoding, utf8);
 		if (reencoded) {
 			free(msg);
@@ -1234,14 +1244,14 @@ void format_note(struct notes_tree *t, const unsigned char *object_sha1,
 	if (msglen && msg[msglen - 1] == '\n')
 		msglen--;
 
-	if (flags & NOTES_SHOW_HEADER) {
+	if (!raw) {
 		const char *ref = t->ref;
 		if (!ref || !strcmp(ref, GIT_NOTES_DEFAULT_REF)) {
 			strbuf_addstr(sb, "\nNotes:\n");
 		} else {
-			if (!prefixcmp(ref, "refs/"))
+			if (starts_with(ref, "refs/"))
 				ref += 5;
-			if (!prefixcmp(ref, "notes/"))
+			if (starts_with(ref, "notes/"))
 				ref += 6;
 			strbuf_addf(sb, "\nNotes (%s):\n", ref);
 		}
@@ -1250,7 +1260,7 @@ void format_note(struct notes_tree *t, const unsigned char *object_sha1,
 	for (msg_p = msg; msg_p < msg + msglen; msg_p += linelen + 1) {
 		linelen = strchrnul(msg_p, '\n') - msg_p;
 
-		if (flags & NOTES_INDENT)
+		if (!raw)
 			strbuf_addstr(sb, "    ");
 		strbuf_add(sb, msg_p, linelen);
 		strbuf_addch(sb, '\n');
@@ -1260,13 +1270,13 @@ void format_note(struct notes_tree *t, const unsigned char *object_sha1,
 }
 
 void format_display_notes(const unsigned char *object_sha1,
-			  struct strbuf *sb, const char *output_encoding, int flags)
+			  struct strbuf *sb, const char *output_encoding, int raw)
 {
 	int i;
 	assert(display_notes_trees);
 	for (i = 0; display_notes_trees[i]; i++)
 		format_note(display_notes_trees[i], object_sha1, sb,
-			    output_encoding, flags);
+			    output_encoding, raw);
 }
 
 int copy_note(struct notes_tree *t,
@@ -1289,10 +1299,20 @@ int copy_note(struct notes_tree *t,
 
 void expand_notes_ref(struct strbuf *sb)
 {
-	if (!prefixcmp(sb->buf, "refs/notes/"))
+	if (starts_with(sb->buf, "refs/notes/"))
 		return; /* we're happy */
-	else if (!prefixcmp(sb->buf, "notes/"))
+	else if (starts_with(sb->buf, "notes/"))
 		strbuf_insert(sb, 0, "refs/", 5);
 	else
 		strbuf_insert(sb, 0, "refs/notes/", 11);
+}
+
+void expand_loose_notes_ref(struct strbuf *sb)
+{
+	unsigned char object[20];
+
+	if (get_sha1(sb->buf, object)) {
+		/* fallback to expand_notes_ref */
+		expand_notes_ref(sb);
+	}
 }

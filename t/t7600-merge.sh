@@ -27,6 +27,7 @@ Testing basic merge operations/option parsing.
 '
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-gpg.sh
 
 printf '%s\n' 1 2 3 4 5 6 7 8 9 >file
 printf '%s\n' '1 X' 2 3 4 5 6 7 8 9 >file.1
@@ -38,8 +39,8 @@ printf '%s\n' '1 X' 2 3 4 '5 X' 6 7 8 '9 X' >result.1-5-9
 >empty
 
 create_merge_msgs () {
-	echo "Merge commit 'c2'" >msg.1-5 &&
-	echo "Merge commit 'c2'; commit 'c3'" >msg.1-5-9 &&
+	echo "Merge tag 'c2'" >msg.1-5 &&
+	echo "Merge tags 'c2' and 'c3'" >msg.1-5-9 &&
 	{
 		echo "Squashed commit of the following:" &&
 		echo &&
@@ -55,11 +56,11 @@ create_merge_msgs () {
 		echo &&
 		git log --no-merges ^HEAD c2 c3
 	} >squash.1-5-9 &&
-	echo >msg.nolog &&
+	: >msg.nologff &&
+	: >msg.nolognoff &&
 	{
-		echo "* commit 'c3':" &&
-		echo "  commit 3" &&
-		echo
+		echo "* tag 'c3':" &&
+		echo "  commit 3"
 	} >msg.log
 }
 
@@ -69,7 +70,7 @@ verify_merge () {
 	git diff --exit-code &&
 	if test -n "$3"
 	then
-		git show -s --pretty=format:%s HEAD >msg.act &&
+		git show -s --pretty=tformat:%s HEAD >msg.act &&
 		test_cmp "$3" msg.act
 	fi
 }
@@ -96,7 +97,11 @@ verify_parents () {
 
 verify_mergeheads () {
 	printf '%s\n' "$@" >mergehead.expected &&
-	test_cmp mergehead.expected .git/MERGE_HEAD
+	while read sha1 rest
+	do
+		git rev-parse $sha1
+	done <.git/MERGE_HEAD >mergehead.actual &&
+	test_cmp mergehead.expected mergehead.actual
 }
 
 verify_no_mergehead () {
@@ -128,7 +133,7 @@ test_expect_success 'setup' '
 	test_tick &&
 	git commit -m "commit 3" &&
 	git tag c3 &&
-	c3=$(git rev-parse HEAD)
+	c3=$(git rev-parse HEAD) &&
 	git reset --hard "$c0" &&
 	create_merge_msgs
 '
@@ -152,7 +157,7 @@ test_expect_success 'merge -h with invalid index' '
 		>.git/index &&
 		test_expect_code 129 git merge -h 2>usage
 	) &&
-	grep "[Uu]sage: git merge" broken/usage
+	test_i18ngrep "[Uu]sage: git merge" broken/usage
 '
 
 test_expect_success 'reject non-strategy with a git-merge-foo name' '
@@ -239,8 +244,7 @@ test_expect_success 'merges with --ff-only' '
 test_expect_success 'merges with merge.ff=only' '
 	git reset --hard c1 &&
 	test_tick &&
-	test_when_finished "git config --unset merge.ff" &&
-	git config merge.ff only &&
+	test_config merge.ff "only" &&
 	test_must_fail git merge c2 &&
 	test_must_fail git merge c3 &&
 	test_must_fail git merge c2 c3 &&
@@ -311,7 +315,7 @@ test_expect_success 'merge c1 with c2 (squash)' '
 
 test_debug 'git log --graph --decorate --oneline --all'
 
-test_expect_success 'unsuccesful merge of c1 with c2 (squash, ff-only)' '
+test_expect_success 'unsuccessful merge of c1 with c2 (squash, ff-only)' '
 	git reset --hard c1 &&
 	test_must_fail git merge --squash --ff-only c2
 '
@@ -331,7 +335,7 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c2 (no-commit in config)' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "--no-commit" &&
+	test_config branch.master.mergeoptions "--no-commit" &&
 	git merge c2 &&
 	verify_merge file result.1-5 &&
 	verify_head $c1 &&
@@ -341,12 +345,11 @@ test_expect_success 'merge c1 with c2 (no-commit in config)' '
 test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c2 (log in config)' '
-	git config branch.master.mergeoptions "" &&
 	git reset --hard c1 &&
 	git merge --log c2 &&
 	git show -s --pretty=tformat:%s%n%b >expect &&
 
-	git config branch.master.mergeoptions --log &&
+	test_config branch.master.mergeoptions "--log" &&
 	git reset --hard c1 &&
 	git merge c2 &&
 	git show -s --pretty=tformat:%s%n%b >actual &&
@@ -355,17 +358,12 @@ test_expect_success 'merge c1 with c2 (log in config)' '
 '
 
 test_expect_success 'merge c1 with c2 (log in config gets overridden)' '
-	test_when_finished "git config --remove-section branch.master" &&
-	test_when_finished "git config --remove-section merge" &&
-	test_might_fail git config --remove-section branch.master &&
-	test_might_fail git config --remove-section merge &&
-
 	git reset --hard c1 &&
 	git merge c2 &&
 	git show -s --pretty=tformat:%s%n%b >expect &&
 
-	git config branch.master.mergeoptions "--no-log" &&
-	git config merge.log true &&
+	test_config branch.master.mergeoptions "--no-log" &&
+	test_config merge.log "true" &&
 	git reset --hard c1 &&
 	git merge c2 &&
 	git show -s --pretty=tformat:%s%n%b >actual &&
@@ -375,7 +373,7 @@ test_expect_success 'merge c1 with c2 (log in config gets overridden)' '
 
 test_expect_success 'merge c1 with c2 (squash in config)' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "--squash" &&
+	test_config branch.master.mergeoptions "--squash" &&
 	git merge c2 &&
 	verify_merge file result.1-5 &&
 	verify_head $c1 &&
@@ -387,7 +385,7 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'override config option -n with --summary' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "-n" &&
+	test_config branch.master.mergeoptions "-n" &&
 	test_tick &&
 	git merge --summary c2 >diffstat.txt &&
 	verify_merge file result.1-5 msg.1-5 &&
@@ -401,7 +399,7 @@ test_expect_success 'override config option -n with --summary' '
 
 test_expect_success 'override config option -n with --stat' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "-n" &&
+	test_config branch.master.mergeoptions "-n" &&
 	test_tick &&
 	git merge --stat c2 >diffstat.txt &&
 	verify_merge file result.1-5 msg.1-5 &&
@@ -417,7 +415,7 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'override config option --stat' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "--stat" &&
+	test_config branch.master.mergeoptions "--stat" &&
 	test_tick &&
 	git merge -n c2 >diffstat.txt &&
 	verify_merge file result.1-5 msg.1-5 &&
@@ -433,7 +431,7 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c2 (override --no-commit)' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "--no-commit" &&
+	test_config branch.master.mergeoptions "--no-commit" &&
 	test_tick &&
 	git merge --commit c2 &&
 	verify_merge file result.1-5 msg.1-5 &&
@@ -444,7 +442,7 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c2 (override --squash)' '
 	git reset --hard c1 &&
-	git config branch.master.mergeoptions "--squash" &&
+	test_config branch.master.mergeoptions "--squash" &&
 	test_tick &&
 	git merge --no-squash c2 &&
 	verify_merge file result.1-5 msg.1-5 &&
@@ -455,7 +453,6 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c0 with c1 (no-ff)' '
 	git reset --hard c0 &&
-	git config branch.master.mergeoptions "" &&
 	test_tick &&
 	git merge --no-ff c1 &&
 	verify_merge file result.1 &&
@@ -466,10 +463,9 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c0 with c1 (merge.ff=false)' '
 	git reset --hard c0 &&
-	git config merge.ff false &&
+	test_config merge.ff "false" &&
 	test_tick &&
 	git merge c1 &&
-	git config --remove-section merge &&
 	verify_merge file result.1 &&
 	verify_parents $c0 $c1
 '
@@ -477,22 +473,19 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'combine branch.master.mergeoptions with merge.ff' '
 	git reset --hard c0 &&
-	git config branch.master.mergeoptions --ff &&
-	git config merge.ff false &&
+	test_config branch.master.mergeoptions "--ff" &&
+	test_config merge.ff "false" &&
 	test_tick &&
 	git merge c1 &&
-	git config --remove-section "branch.master" &&
-	git config --remove-section "merge" &&
 	verify_merge file result.1 &&
 	verify_parents "$c0"
 '
 
 test_expect_success 'tolerate unknown values for merge.ff' '
 	git reset --hard c0 &&
-	git config merge.ff something-new &&
+	test_config merge.ff "something-new" &&
 	test_tick &&
 	git merge c1 2>message &&
-	git config --remove-section "merge" &&
 	verify_head "$c1" &&
 	test_cmp empty message
 '
@@ -503,14 +496,20 @@ test_expect_success 'combining --squash and --no-ff is refused' '
 	test_must_fail git merge --no-ff --squash c1
 '
 
-test_expect_success 'combining --ff-only and --no-ff is refused' '
-	test_must_fail git merge --ff-only --no-ff c1 &&
-	test_must_fail git merge --no-ff --ff-only c1
+test_expect_success 'option --ff-only overwrites --no-ff' '
+	git merge --no-ff --ff-only c1 &&
+	test_must_fail git merge --no-ff --ff-only c2
+'
+
+test_expect_success 'option --no-ff overrides merge.ff=only config' '
+	git reset --hard c0 &&
+	test_config merge.ff only &&
+	git merge --no-ff c1
 '
 
 test_expect_success 'merge c0 with c1 (ff overrides no-ff)' '
 	git reset --hard c0 &&
-	git config branch.master.mergeoptions "--no-ff" &&
+	test_config branch.master.mergeoptions "--no-ff" &&
 	git merge --ff c1 &&
 	verify_merge file result.1 &&
 	verify_head $c1
@@ -520,14 +519,20 @@ test_expect_success 'merge log message' '
 	git reset --hard c0 &&
 	git merge --no-log c2 &&
 	git show -s --pretty=format:%b HEAD >msg.act &&
-	test_cmp msg.nolog msg.act &&
+	test_cmp msg.nologff msg.act &&
+
+	git reset --hard c0 &&
+	test_config branch.master.mergeoptions "--no-ff" &&
+	git merge --no-log c2 &&
+	git show -s --pretty=format:%b HEAD >msg.act &&
+	test_cmp msg.nolognoff msg.act &&
 
 	git merge --log c3 &&
 	git show -s --pretty=format:%b HEAD >msg.act &&
 	test_cmp msg.log msg.act &&
 
 	git reset --hard HEAD^ &&
-	git config merge.log yes &&
+	test_config merge.log "yes" &&
 	git merge c3 &&
 	git show -s --pretty=format:%b HEAD >msg.act &&
 	test_cmp msg.log msg.act
@@ -537,7 +542,6 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c0, c2, c0, and c1' '
        git reset --hard c1 &&
-       git config branch.master.mergeoptions "" &&
        test_tick &&
        git merge c0 c2 c0 c1 &&
        verify_merge file result.1-5 &&
@@ -548,7 +552,6 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c0, c2, c0, and c1' '
        git reset --hard c1 &&
-       git config branch.master.mergeoptions "" &&
        test_tick &&
        git merge c0 c2 c0 c1 &&
        verify_merge file result.1-5 &&
@@ -559,7 +562,6 @@ test_debug 'git log --graph --decorate --oneline --all'
 
 test_expect_success 'merge c1 with c1 and c2' '
        git reset --hard c1 &&
-       git config branch.master.mergeoptions "" &&
        test_tick &&
        git merge c1 c2 &&
        verify_merge file result.1-5 &&
@@ -617,10 +619,10 @@ test_expect_success 'merge early part of c2' '
 	git tag c6 &&
 	git branch -f c5-branch c5 &&
 	git merge c5-branch~1 &&
-	git show -s --pretty=format:%s HEAD >actual.branch &&
+	git show -s --pretty=tformat:%s HEAD >actual.branch &&
 	git reset --keep HEAD^ &&
 	git merge c5~1 &&
-	git show -s --pretty=format:%s HEAD >actual.tag &&
+	git show -s --pretty=tformat:%s HEAD >actual.tag &&
 	test_cmp expected.branch actual.branch &&
 	test_cmp expected.tag actual.tag
 '
@@ -664,6 +666,63 @@ test_expect_success 'merge --no-ff --edit' '
 	grep "work done on the side branch" raw &&
 	sed "1,/^$/d" >actual raw &&
 	test_cmp actual expected
+'
+
+test_expect_success GPG 'merge --ff-only tag' '
+	git reset --hard c0 &&
+	git commit --allow-empty -m "A newer commit" &&
+	git tag -s -m "A newer commit" signed &&
+	git reset --hard c0 &&
+
+	git merge --ff-only signed &&
+	git rev-parse signed^0 >expect &&
+	git rev-parse HEAD >actual &&
+	test_cmp actual expect
+'
+
+test_expect_success GPG 'merge --no-edit tag should skip editor' '
+	git reset --hard c0 &&
+	git commit --allow-empty -m "A newer commit" &&
+	git tag -f -s -m "A newer commit" signed &&
+	git reset --hard c0 &&
+
+	EDITOR=false git merge --no-edit signed &&
+	git rev-parse signed^0 >expect &&
+	git rev-parse HEAD^2 >actual &&
+	test_cmp actual expect
+'
+
+test_expect_success 'set up mod-256 conflict scenario' '
+	# 256 near-identical stanzas...
+	for i in $(test_seq 1 256); do
+		for j in 1 2 3 4 5; do
+			echo $i-$j
+		done
+	done >file &&
+	git add file &&
+	git commit -m base &&
+
+	# one side changes the first line of each to "master"
+	sed s/-1/-master/ <file >tmp &&
+	mv tmp file &&
+	git commit -am master &&
+
+	# and the other to "side"; merging the two will
+	# yield 256 separate conflicts
+	git checkout -b side HEAD^ &&
+	sed s/-1/-side/ <file >tmp &&
+	mv tmp file &&
+	git commit -am side
+'
+
+test_expect_success 'merge detects mod-256 conflicts (recursive)' '
+	git reset --hard &&
+	test_must_fail git merge -s recursive master
+'
+
+test_expect_success 'merge detects mod-256 conflicts (resolve)' '
+	git reset --hard &&
+	test_must_fail git merge -s resolve master
 '
 
 test_done

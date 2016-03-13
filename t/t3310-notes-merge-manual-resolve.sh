@@ -314,6 +314,18 @@ y and z notes on 1st commit
 
 EOF
 
+test_expect_success 'do not allow mixing --commit and --abort' '
+	test_must_fail git notes merge --commit --abort
+'
+
+test_expect_success 'do not allow mixing --commit and --strategy' '
+	test_must_fail git notes merge --commit --strategy theirs
+'
+
+test_expect_success 'do not allow mixing --abort and --strategy' '
+	test_must_fail git notes merge --abort --strategy theirs
+'
+
 test_expect_success 'finalize conflicting merge (z => m)' '
 	# Resolve conflicts and finalize merge
 	cat >.git/NOTES_MERGE_WORKTREE/$commit_sha1 <<EOF &&
@@ -324,7 +336,7 @@ y and z notes on 4th commit
 EOF
 	git notes merge --commit &&
 	# No .git/NOTES_MERGE_* files left
-	test_must_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
+	test_might_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
 	test_cmp /dev/null output &&
 	# Merge commit has pre-merge y and pre-merge z as parents
 	test "$(git rev-parse refs/notes/m^1)" = "$(cat pre_merge_y)" &&
@@ -386,10 +398,10 @@ test_expect_success 'redo merge of z into m (== y) with default ("manual") resol
 test_expect_success 'abort notes merge' '
 	git notes merge --abort &&
 	# No .git/NOTES_MERGE_* files left
-	test_must_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
+	test_might_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
 	test_cmp /dev/null output &&
 	# m has not moved (still == y)
-	test "$(git rev-parse refs/notes/m)" = "$(cat pre_merge_y)"
+	test "$(git rev-parse refs/notes/m)" = "$(cat pre_merge_y)" &&
 	# Verify that other notes refs has not changed (w, x, y and z)
 	verify_notes w &&
 	verify_notes x &&
@@ -453,7 +465,7 @@ EOF
 	# Finalize merge
 	git notes merge --commit &&
 	# No .git/NOTES_MERGE_* files left
-	test_must_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
+	test_might_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
 	test_cmp /dev/null output &&
 	# Merge commit has pre-merge y and pre-merge z as parents
 	test "$(git rev-parse refs/notes/m^1)" = "$(cat pre_merge_y)" &&
@@ -525,9 +537,9 @@ EOF
 	test -f .git/NOTES_MERGE_WORKTREE/$commit_sha3 &&
 	test -f .git/NOTES_MERGE_WORKTREE/$commit_sha4 &&
 	# Refs are unchanged
-	test "$(git rev-parse refs/notes/m)" = "$(git rev-parse refs/notes/w)"
-	test "$(git rev-parse refs/notes/y)" = "$(git rev-parse NOTES_MERGE_PARTIAL^1)"
-	test "$(git rev-parse refs/notes/m)" != "$(git rev-parse NOTES_MERGE_PARTIAL^1)"
+	test "$(git rev-parse refs/notes/m)" = "$(git rev-parse refs/notes/w)" &&
+	test "$(git rev-parse refs/notes/y)" = "$(git rev-parse NOTES_MERGE_PARTIAL^1)" &&
+	test "$(git rev-parse refs/notes/m)" != "$(git rev-parse NOTES_MERGE_PARTIAL^1)" &&
 	# Mention refs/notes/m, and its current and expected value in output
 	grep -q "refs/notes/m" output &&
 	grep -q "$(git rev-parse refs/notes/m)" output &&
@@ -542,15 +554,34 @@ EOF
 test_expect_success 'resolve situation by aborting the notes merge' '
 	git notes merge --abort &&
 	# No .git/NOTES_MERGE_* files left
-	test_must_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
+	test_might_fail ls .git/NOTES_MERGE_* >output 2>/dev/null &&
 	test_cmp /dev/null output &&
 	# m has not moved (still == w)
-	test "$(git rev-parse refs/notes/m)" = "$(git rev-parse refs/notes/w)"
+	test "$(git rev-parse refs/notes/m)" = "$(git rev-parse refs/notes/w)" &&
 	# Verify that other notes refs has not changed (w, x, y and z)
 	verify_notes w &&
 	verify_notes x &&
 	verify_notes y &&
 	verify_notes z
+'
+
+cat >expect_notes <<EOF
+foo
+bar
+EOF
+
+test_expect_success 'switch cwd before committing notes merge' '
+	git notes add -m foo HEAD &&
+	git notes --ref=other add -m bar HEAD &&
+	test_must_fail git notes merge refs/notes/other &&
+	(
+		cd .git/NOTES_MERGE_WORKTREE &&
+		echo "foo" > $(git rev-parse HEAD) &&
+		echo "bar" >> $(git rev-parse HEAD) &&
+		git notes merge --commit
+	) &&
+	git notes show HEAD > actual_notes &&
+	test_cmp expect_notes actual_notes
 '
 
 test_done

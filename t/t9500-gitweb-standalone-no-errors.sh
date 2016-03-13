@@ -156,10 +156,10 @@ test_expect_success \
 	 git commit -a -m "File renamed." &&
 	 gitweb_run "p=.git;a=commitdiff"'
 
-test_expect_success SYMLINKS \
+test_expect_success \
 	'commitdiff(0): file to symlink' \
 	'rm renamed_file &&
-	 ln -s file renamed_file &&
+	 test_ln_s_add file renamed_file &&
 	 git commit -a -m "File to symlink." &&
 	 gitweb_run "p=.git;a=commitdiff"'
 
@@ -212,15 +212,14 @@ test_expect_success \
 # ----------------------------------------------------------------------
 # commitdiff testing (taken from t4114-apply-typechange.sh)
 
-test_expect_success SYMLINKS 'setup typechange commits' '
+test_expect_success 'setup typechange commits' '
 	echo "hello world" > foo &&
 	echo "hi planet" > bar &&
 	git update-index --add foo bar &&
 	git commit -m initial &&
 	git branch initial &&
 	rm -f foo &&
-	ln -s bar foo &&
-	git update-index foo &&
+	test_ln_s_add bar foo &&
 	git commit -m "foo symlinked to bar" &&
 	git branch foo-symlinked-to-bar &&
 	rm -f foo &&
@@ -274,6 +273,53 @@ test_expect_success \
 	'gitweb_run "p=.git;a=commitdiff;hp=foo-becomes-a-directory;h=foo-symlinked-to-bar"'
 
 # ----------------------------------------------------------------------
+# commitdiff testing (incomplete lines)
+
+test_expect_success 'setup incomplete lines' '
+	cat >file<<-\EOF &&
+	Dominus regit me,
+	et nihil mihi deerit.
+	In loco pascuae ibi me collocavit,
+	super aquam refectionis educavit me;
+	animam meam convertit,
+	deduxit me super semitas jusitiae,
+	propter nomen suum.
+	CHANGE_ME
+	EOF
+	git commit -a -m "Preparing for incomplete lines" &&
+	echo "incomplete" | tr -d "\\012" >>file &&
+	git commit -a -m "Add incomplete line" &&
+	git tag incomplete_lines_add &&
+	sed -e s/CHANGE_ME/change_me/ <file >file+ &&
+	mv -f file+ file &&
+	git commit -a -m "Incomplete context line" &&
+	git tag incomplete_lines_ctx &&
+	echo "Dominus regit me," >file &&
+	echo "incomplete line" | tr -d "\\012" >>file &&
+	git commit -a -m "Change incomplete line" &&
+	git tag incomplete_lines_chg &&
+	echo "Dominus regit me," >file &&
+	git commit -a -m "Remove incomplete line" &&
+	git tag incomplete_lines_rem
+'
+
+test_expect_success 'commitdiff(1): addition of incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_add"
+'
+
+test_expect_success 'commitdiff(1): incomplete line as context line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_ctx"
+'
+
+test_expect_success 'commitdiff(1): change incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_chg"
+'
+
+test_expect_success 'commitdiff(1): removal of incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_rem"
+'
+
+# ----------------------------------------------------------------------
 # commit, commitdiff: merge, large
 test_expect_success \
 	'Create a merge' \
@@ -282,7 +328,8 @@ test_expect_success \
 	 git add b &&
 	 git commit -a -m "On branch" &&
 	 git checkout master &&
-	 git pull . b'
+	 git merge b &&
+	 git tag merge_commit'
 
 test_expect_success \
 	'commit(0): merge commit' \
@@ -313,11 +360,7 @@ test_expect_success \
 	 echo "Changed" >> 04-rename-to &&
 	 test_chmod +x 05-mode-change &&
 	 rm -f 06-file-or-symlink &&
-	 if test_have_prereq SYMLINKS; then
-		ln -s 01-change 06-file-or-symlink
-	 else
-		printf %s 01-change > 06-file-or-symlink
-	 fi &&
+	 test_ln_s_add 01-change 06-file-or-symlink &&
 	 echo "Changed and have mode changed" > 07-change-mode-change	&&
 	 test_chmod +x 07-change-mode-change &&
 	 git commit -a -m "Large commit" &&
@@ -330,6 +373,29 @@ test_expect_success \
 test_expect_success \
 	'commitdiff(1): large commit' \
 	'gitweb_run "p=.git;a=commitdiff;h=b"'
+
+# ----------------------------------------------------------------------
+# side-by-side diff
+
+test_expect_success 'side-by-side: addition of incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_add;ds=sidebyside"
+'
+
+test_expect_success 'side-by-side: incomplete line as context line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_ctx;ds=sidebyside"
+'
+
+test_expect_success 'side-by-side: changed incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_chg;ds=sidebyside"
+'
+
+test_expect_success 'side-by-side: removal of incomplete line' '
+	gitweb_run "p=.git;a=commitdiff;h=incomplete_lines_rem;ds=sidebyside"
+'
+
+test_expect_success 'side-by-side: merge commit' '
+	gitweb_run "p=.git;a=commitdiff;h=merge_commit;ds=sidebyside"
+'
 
 # ----------------------------------------------------------------------
 # tags testing
@@ -404,6 +470,14 @@ test_expect_success \
 	'gitweb_run "" "/.git/master:foo/"'
 
 test_expect_success \
+	'path_info: project/branch (non-existent)' \
+	'gitweb_run "" "/.git/non-existent"'
+
+test_expect_success \
+	'path_info: project/branch:filename (non-existent branch)' \
+	'gitweb_run "" "/.git/non-existent:non-existent"'
+
+test_expect_success \
 	'path_info: project/branch:file (non-existent)' \
 	'gitweb_run "" "/.git/master:non-existent"'
 
@@ -460,8 +534,7 @@ test_expect_success \
 	 test_when_finished "GIT_COMMITTER_NAME=\"C O Mitter\"" &&
 	 echo "ISO-8859-1" >> file &&
 	 git add file &&
-	 git config i18n.commitencoding ISO-8859-1 &&
-	 test_when_finished "git config --unset i18n.commitencoding" &&
+	 test_config i18n.commitencoding ISO-8859-1 &&
 	 git commit -F "$TEST_DIRECTORY"/t3900/ISO8859-1.txt &&
 	 gitweb_run "p=.git;a=commit"'
 
@@ -559,6 +632,45 @@ test_expect_success \
 	'gitweb_run "p=.git;a=tree"'
 
 # ----------------------------------------------------------------------
+# searching
+
+cat >>gitweb_config.perl <<\EOF
+
+# enable search
+$feature{'search'}{'default'} = [1];
+$feature{'grep'}{'default'} = [1];
+$feature{'pickaxe'}{'default'} = [1];
+EOF
+
+test_expect_success \
+	'search: preparation' \
+	'echo "1st MATCH" >>file &&
+	 echo "2nd MATCH" >>file &&
+	 echo "MATCH" >>bar &&
+	 git add file bar &&
+	 git commit -m "Added MATCH word"'
+
+test_expect_success \
+	'search: commit author' \
+	'gitweb_run "p=.git;a=search;h=HEAD;st=author;s=A+U+Thor"'
+
+test_expect_success \
+	'search: commit message' \
+	'gitweb_run "p=.git;a=search;h=HEAD;st=commitr;s=MATCH"'
+
+test_expect_success \
+	'search: grep' \
+	'gitweb_run "p=.git;a=search;h=HEAD;st=grep;s=MATCH"'
+
+test_expect_success \
+	'search: pickaxe' \
+	'gitweb_run "p=.git;a=search;h=HEAD;st=pickaxe;s=MATCH"'
+
+test_expect_success \
+	'search: projects' \
+	'gitweb_run "a=project_list;s=.git"'
+
+# ----------------------------------------------------------------------
 # non-ASCII in README.html
 
 test_expect_success \
@@ -571,9 +683,11 @@ test_expect_success \
 # syntax highlighting
 
 
-highlight --version >/dev/null 2>&1
+highlight_version=$(highlight --version </dev/null 2>/dev/null)
 if [ $? -eq 127 ]; then
-	say "Skipping syntax highlighting test, because 'highlight' was not found"
+	say "Skipping syntax highlighting tests: 'highlight' not found"
+elif test -z "$highlight_version"; then
+	say "Skipping syntax highlighting tests: incorrect 'highlight' found"
 else
 	test_set_prereq HIGHLIGHT
 	cat >>gitweb_config.perl <<-\EOF
@@ -659,5 +773,17 @@ test_expect_success \
 	'categories: projects list, only default category' \
 	'echo "\$projects_list_group_categories = 1;" >>gitweb_config.perl &&
 	 gitweb_run'
+
+# ----------------------------------------------------------------------
+# unborn branches
+
+test_expect_success \
+	'unborn HEAD: "summary" page (with "heads" subview)' \
+	'{
+		git checkout orphan_branch ||
+		git checkout --orphan orphan_branch
+	 } &&
+	 test_when_finished "git checkout master" &&
+	 gitweb_run "p=.git;a=summary"'
 
 test_done

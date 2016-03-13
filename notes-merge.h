@@ -1,6 +1,8 @@
 #ifndef NOTES_MERGE_H
 #define NOTES_MERGE_H
 
+#include "notes-utils.h"
+
 #define NOTES_MERGE_WORKTREE "NOTES_MERGE_WORKTREE"
 
 enum notes_merge_verbosity {
@@ -13,31 +15,11 @@ struct notes_merge_options {
 	const char *remote_ref;
 	struct strbuf commit_msg;
 	int verbosity;
-	enum {
-		NOTES_MERGE_RESOLVE_MANUAL = 0,
-		NOTES_MERGE_RESOLVE_OURS,
-		NOTES_MERGE_RESOLVE_THEIRS,
-		NOTES_MERGE_RESOLVE_UNION,
-		NOTES_MERGE_RESOLVE_CAT_SORT_UNIQ
-	} strategy;
+	enum notes_merge_strategy strategy;
 	unsigned has_worktree:1;
 };
 
 void init_notes_merge_options(struct notes_merge_options *o);
-
-/*
- * Create new notes commit from the given notes tree
- *
- * Properties of the created commit:
- * - tree: the result of converting t to a tree object with write_notes_tree().
- * - parents: the given parents OR (if NULL) the commit referenced by t->ref.
- * - author/committer: the default determined by commmit_tree().
- * - commit message: msg
- *
- * The resulting commit SHA1 is stored in result_sha1.
- */
-void create_notes_commit(struct notes_tree *t, struct commit_list *parents,
-			 const char *msg, unsigned char *result_sha1);
 
 /*
  * Merge notes from o->remote_ref into o->local_ref

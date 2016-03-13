@@ -189,7 +189,7 @@ for args in "-w --stdin-paths" "--stdin-paths -w"; do
 done
 
 test_expect_success 'corrupt tree' '
-	echo abc >malformed-tree
+	echo abc >malformed-tree &&
 	test_must_fail git hash-object -t tree malformed-tree
 '
 
@@ -199,6 +199,25 @@ test_expect_success 'corrupt commit' '
 
 test_expect_success 'corrupt tag' '
 	test_must_fail git hash-object -t tag --stdin </dev/null
+'
+
+test_expect_success 'hash-object complains about bogus type name' '
+	test_must_fail git hash-object -t bogus --stdin </dev/null
+'
+
+test_expect_success 'hash-object complains about truncated type name' '
+	test_must_fail git hash-object -t bl --stdin </dev/null
+'
+
+test_expect_success '--literally' '
+	t=1234567890 &&
+	echo example | git hash-object -t $t --literally --stdin
+'
+
+test_expect_success '--literally with extra-long type' '
+	t=12345678901234567890123456789012345678901234567890 &&
+	t="$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t$t" &&
+	echo example | git hash-object -t $t --literally --stdin
 '
 
 test_done

@@ -25,10 +25,7 @@ test_expect_success 'setup 1' '
 	git branch submod &&
 	git branch copy &&
 	git branch rename &&
-	if test_have_prereq SYMLINKS
-	then
-		git branch rename-ln
-	fi &&
+	git branch rename-ln &&
 
 	echo hello >>a &&
 	cp a d/e &&
@@ -260,16 +257,13 @@ test_expect_success 'setup 8' '
 	git add e &&
 	test_tick &&
 	git commit -m "rename a->e" &&
-	if test_have_prereq SYMLINKS
-	then
-		git checkout rename-ln &&
-		git mv a e &&
-		ln -s e a &&
-		git add a e &&
-		test_tick &&
-		git commit -m "rename a->e, symlink a->e" &&
-		oln=`printf e | git hash-object --stdin`
-	fi
+	c7=$(git rev-parse --verify HEAD) &&
+	git checkout rename-ln &&
+	git mv a e &&
+	test_ln_s_add e a &&
+	test_tick &&
+	git commit -m "rename a->e, symlink a->e" &&
+	oln=$(printf e | git hash-object --stdin)
 '
 
 test_expect_success 'setup 9' '
@@ -285,17 +279,7 @@ test_expect_success 'merge-recursive simple' '
 	rm -fr [abcd] &&
 	git checkout -f "$c2" &&
 
-	git merge-recursive "$c0" -- "$c2" "$c1"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c2" "$c1"
 '
 
 test_expect_success 'merge-recursive result' '
@@ -334,17 +318,7 @@ test_expect_success 'merge-recursive remove conflict' '
 	rm -fr [abcd] &&
 	git checkout -f "$c1" &&
 
-	git merge-recursive "$c0" -- "$c1" "$c5"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c1" "$c5"
 '
 
 test_expect_success 'merge-recursive remove conflict' '
@@ -388,17 +362,7 @@ test_expect_success 'merge-recursive d/f conflict' '
 	git reset --hard &&
 	git checkout -f "$c1" &&
 
-	git merge-recursive "$c0" -- "$c1" "$c4"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c1" "$c4"
 '
 
 test_expect_success 'merge-recursive d/f conflict result' '
@@ -422,17 +386,7 @@ test_expect_success 'merge-recursive d/f conflict the other way' '
 	git reset --hard &&
 	git checkout -f "$c4" &&
 
-	git merge-recursive "$c0" -- "$c4" "$c1"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c4" "$c1"
 '
 
 test_expect_success 'merge-recursive d/f conflict result the other way' '
@@ -456,17 +410,7 @@ test_expect_success 'merge-recursive d/f conflict' '
 	git reset --hard &&
 	git checkout -f "$c1" &&
 
-	git merge-recursive "$c0" -- "$c1" "$c6"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c1" "$c6"
 '
 
 test_expect_success 'merge-recursive d/f conflict result' '
@@ -490,17 +434,7 @@ test_expect_success 'merge-recursive d/f conflict' '
 	git reset --hard &&
 	git checkout -f "$c6" &&
 
-	git merge-recursive "$c0" -- "$c6" "$c1"
-	status=$?
-	case "$status" in
-	1)
-		: happy
-		;;
-	*)
-		echo >&2 "why status $status!!!"
-		false
-		;;
-	esac
+	test_expect_code 1 git merge-recursive "$c0" -- "$c6" "$c1"
 '
 
 test_expect_success 'merge-recursive d/f conflict result' '
@@ -584,6 +518,52 @@ test_expect_success 'reset and bind merge' '
 
 '
 
+test_expect_success 'merge-recursive w/ empty work tree - ours has rename' '
+	(
+		GIT_WORK_TREE="$PWD/ours-has-rename-work" &&
+		export GIT_WORK_TREE &&
+		GIT_INDEX_FILE="$PWD/ours-has-rename-index" &&
+		export GIT_INDEX_FILE &&
+		mkdir "$GIT_WORK_TREE" &&
+		git read-tree -i -m $c7 &&
+		git update-index --ignore-missing --refresh &&
+		git merge-recursive $c0 -- $c7 $c3 &&
+		git ls-files -s >actual-files
+	) 2>actual-err &&
+	>expected-err &&
+	cat >expected-files <<-EOF &&
+	100644 $o3 0	b/c
+	100644 $o0 0	c
+	100644 $o0 0	d/e
+	100644 $o0 0	e
+	EOF
+	test_cmp expected-files actual-files &&
+	test_cmp expected-err actual-err
+'
+
+test_expect_success 'merge-recursive w/ empty work tree - theirs has rename' '
+	(
+		GIT_WORK_TREE="$PWD/theirs-has-rename-work" &&
+		export GIT_WORK_TREE &&
+		GIT_INDEX_FILE="$PWD/theirs-has-rename-index" &&
+		export GIT_INDEX_FILE &&
+		mkdir "$GIT_WORK_TREE" &&
+		git read-tree -i -m $c3 &&
+		git update-index --ignore-missing --refresh &&
+		git merge-recursive $c0 -- $c3 $c7 &&
+		git ls-files -s >actual-files
+	) 2>actual-err &&
+	>expected-err &&
+	cat >expected-files <<-EOF &&
+	100644 $o3 0	b/c
+	100644 $o0 0	c
+	100644 $o0 0	d/e
+	100644 $o0 0	e
+	EOF
+	test_cmp expected-files actual-files &&
+	test_cmp expected-err actual-err
+'
+
 test_expect_success 'merge removes empty directories' '
 
 	git reset --hard master &&
@@ -629,28 +609,55 @@ test_expect_success 'merge-recursive copy vs. rename' '
 	test_cmp expected actual
 '
 
-if test_have_prereq SYMLINKS
-then
-	test_expect_failure 'merge-recursive rename vs. rename/symlink' '
+test_expect_failure 'merge-recursive rename vs. rename/symlink' '
 
-		git checkout -f rename &&
-		git merge rename-ln &&
-		( git ls-tree -r HEAD ; git ls-files -s ) >actual &&
-		(
-			echo "120000 blob $oln	a"
-			echo "100644 blob $o0	b"
-			echo "100644 blob $o0	c"
-			echo "100644 blob $o0	d/e"
-			echo "100644 blob $o0	e"
-			echo "120000 $oln 0	a"
-			echo "100644 $o0 0	b"
-			echo "100644 $o0 0	c"
-			echo "100644 $o0 0	d/e"
-			echo "100644 $o0 0	e"
-		) >expected &&
-		test_cmp expected actual
-	'
-fi
+	git checkout -f rename &&
+	git merge rename-ln &&
+	( git ls-tree -r HEAD ; git ls-files -s ) >actual &&
+	(
+		echo "120000 blob $oln	a"
+		echo "100644 blob $o0	b"
+		echo "100644 blob $o0	c"
+		echo "100644 blob $o0	d/e"
+		echo "100644 blob $o0	e"
+		echo "120000 $oln 0	a"
+		echo "100644 $o0 0	b"
+		echo "100644 $o0 0	c"
+		echo "100644 $o0 0	d/e"
+		echo "100644 $o0 0	e"
+	) >expected &&
+	test_cmp expected actual
+'
 
+test_expect_success 'merging with triple rename across D/F conflict' '
+	git reset --hard HEAD &&
+	git checkout -b main &&
+	git rm -rf . &&
+
+	echo "just a file" >sub1 &&
+	mkdir -p sub2 &&
+	echo content1 >sub2/file1 &&
+	echo content2 >sub2/file2 &&
+	echo content3 >sub2/file3 &&
+	mkdir simple &&
+	echo base >simple/bar &&
+	git add -A &&
+	test_tick &&
+	git commit -m base &&
+
+	git checkout -b other &&
+	echo more >>simple/bar &&
+	test_tick &&
+	git commit -a -m changesimplefile &&
+
+	git checkout main &&
+	git rm sub1 &&
+	git mv sub2 sub1 &&
+	test_tick &&
+	git commit -m changefiletodir &&
+
+	test_tick &&
+	git merge other
+'
 
 test_done

@@ -11,7 +11,7 @@
 #include "progress.h"
 #include "csum-file.h"
 
-static void flush(struct sha1file *f, void *buf, unsigned int count)
+static void flush(struct sha1file *f, const void *buf, unsigned int count)
 {
 	if (0 <= f->check_fd && count)  {
 		unsigned char check_buffer[8192];
@@ -86,13 +86,13 @@ int sha1close(struct sha1file *f, unsigned char *result, unsigned int flags)
 	return fd;
 }
 
-int sha1write(struct sha1file *f, void *buf, unsigned int count)
+void sha1write(struct sha1file *f, const void *buf, unsigned int count)
 {
 	while (count) {
 		unsigned offset = f->offset;
 		unsigned left = sizeof(f->buffer) - offset;
 		unsigned nr = count > left ? left : count;
-		void *data;
+		const void *data;
 
 		if (f->do_crc)
 			f->crc32 = crc32(f->crc32, buf, nr);
@@ -116,7 +116,6 @@ int sha1write(struct sha1file *f, void *buf, unsigned int count)
 		}
 		f->offset = offset;
 	}
-	return 0;
 }
 
 struct sha1file *sha1fd(int fd, const char *name)
@@ -131,14 +130,10 @@ struct sha1file *sha1fd_check(const char *name)
 
 	sink = open("/dev/null", O_WRONLY);
 	if (sink < 0)
-		return NULL;
+		die_errno("unable to open /dev/null");
 	check = open(name, O_RDONLY);
-	if (check < 0) {
-		int saved_errno = errno;
-		close(sink);
-		errno = saved_errno;
-		return NULL;
-	}
+	if (check < 0)
+		die_errno("unable to open '%s'", name);
 	f = sha1fd(sink, name);
 	f->check_fd = check;
 	return f;
@@ -156,6 +151,26 @@ struct sha1file *sha1fd_throughput(int fd, const char *name, struct progress *tp
 	f->do_crc = 0;
 	git_SHA1_Init(&f->ctx);
 	return f;
+}
+
+void sha1file_checkpoint(struct sha1file *f, struct sha1file_checkpoint *checkpoint)
+{
+	sha1flush(f);
+	checkpoint->offset = f->total;
+	checkpoint->ctx = f->ctx;
+}
+
+int sha1file_truncate(struct sha1file *f, struct sha1file_checkpoint *checkpoint)
+{
+	off_t offset = checkpoint->offset;
+
+	if (ftruncate(f->fd, offset) ||
+	    lseek(f->fd, offset, SEEK_SET) != offset)
+		return -1;
+	f->total = offset;
+	f->ctx = checkpoint->ctx;
+	f->offset = 0; /* sha1flush() was called in checkpoint */
+	return 0;
 }
 
 void crc32_begin(struct sha1file *f)

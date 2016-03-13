@@ -40,7 +40,7 @@ check_snapshot () {
 	echo "basename=$basename"
 	grep "filename=.*$basename.tar" gitweb.headers >/dev/null 2>&1 &&
 	"$TAR" tf gitweb.body >file_list &&
-	! grep -v "^$prefix/" file_list
+	! grep -v -e "^$prefix$" -e "^$prefix/" -e "^pax_global_header$" file_list
 }
 
 test_expect_success setup '
@@ -145,9 +145,11 @@ test_expect_success 'forks: not skipped unless "forks" feature enabled' '
 	grep -q ">fork of .*<"           gitweb.body
 '
 
-cat >>gitweb_config.perl <<\EOF &&
-$feature{'forks'}{'default'} = [1];
-EOF
+test_expect_success 'enable forks feature' '
+	cat >>gitweb_config.perl <<-\EOF
+	$feature{"forks"}{"default"} = [1];
+	EOF
+'
 
 test_expect_success 'forks: forks skipped if "forks" feature enabled' '
 	gitweb_run "a=project_list" &&
@@ -173,7 +175,7 @@ test_expect_success 'forks: can access forked repository' '
 '
 
 test_expect_success 'forks: project_index lists all projects (incl. forks)' '
-	cat >expected <<-\EOF
+	cat >expected <<-\EOF &&
 	.git
 	foo.bar.git
 	foo.git
@@ -185,5 +187,20 @@ test_expect_success 'forks: project_index lists all projects (incl. forks)' '
 	test_cmp expected actual
 '
 
+xss() {
+	echo >&2 "Checking $1..." &&
+	gitweb_run "$1" &&
+	if grep "$TAG" gitweb.body; then
+		echo >&2 "xss: $TAG should have been quoted in output"
+		return 1
+	fi
+	return 0
+}
+
+test_expect_success 'xss checks' '
+	TAG="<magic-xss-tag>" &&
+	xss "a=rss&p=$TAG" &&
+	xss "a=rss&p=foo.git&f=$TAG"
+'
 
 test_done

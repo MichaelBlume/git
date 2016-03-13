@@ -161,7 +161,7 @@ merge_name () {
 			return
 		fi
 	fi
-	if test "$remote" = "FETCH_HEAD" -a -r "$GIT_DIR/FETCH_HEAD"
+	if test "$remote" = "FETCH_HEAD" && test -r "$GIT_DIR/FETCH_HEAD"
 	then
 		sed -e 's/	not-for-merge	/		/' -e 1q \
 			"$GIT_DIR/FETCH_HEAD"
@@ -263,7 +263,7 @@ fi
 
 # This could be traditional "merge <msg> HEAD <commit>..."  and the
 # way we can tell it is to see if the second token is HEAD, but some
-# people might have misused the interface and used a committish that
+# people might have misused the interface and used a commit-ish that
 # is the same as HEAD there instead.  Traditional format never would
 # have "-m" so it is an additional safety measure to check for it.
 
@@ -341,7 +341,7 @@ case "$use_strategies" in
 '')
 	case "$#" in
 	1)
-		var="`git config --get pull.twohead`"
+		var="$(git config --get pull.twohead)"
 		if test -n "$var"
 		then
 			use_strategies="$var"
@@ -349,7 +349,7 @@ case "$use_strategies" in
 			use_strategies="$default_twohead_strategies"
 		fi ;;
 	*)
-		var="`git config --get pull.octopus`"
+		var="$(git config --get pull.octopus)"
 		if test -n "$var"
 		then
 			use_strategies="$var"
@@ -523,11 +523,11 @@ do
 
 	if test "$exit" -eq 1
 	then
-	    cnt=`{
+	    cnt=$({
 		git diff-files --name-only
 		git ls-files --unmerged
-	    } | wc -l`
-	    if test $best_cnt -le 0 -o $cnt -le $best_cnt
+	    } | wc -l)
+	    if test $best_cnt -le 0 || test $cnt -le $best_cnt
 	    then
 		best_strategy=$strategy
 		best_cnt=$cnt

@@ -7,11 +7,19 @@ test_description='Per branch config variables affects "git fetch".
 
 . ./test-lib.sh
 
-D=`pwd`
+D=$(pwd)
 
 test_bundle_object_count () {
 	git verify-pack -v "$1" >verify.out &&
 	test "$2" = $(grep '^[0-9a-f]\{40\} ' verify.out | wc -l)
+}
+
+convert_bundle_to_pack () {
+	while read x && test -n "$x"
+	do
+		:;
+	done
+	cat
 }
 
 test_expect_success setup '
@@ -56,8 +64,8 @@ test_expect_success "fetch test" '
 	cd two &&
 	git fetch &&
 	test -f .git/refs/heads/one &&
-	mine=`git rev-parse refs/heads/one` &&
-	his=`cd ../one && git rev-parse refs/heads/master` &&
+	mine=$(git rev-parse refs/heads/one) &&
+	his=$(cd ../one && git rev-parse refs/heads/master) &&
 	test "z$mine" = "z$his"
 '
 
@@ -67,11 +75,11 @@ test_expect_success "fetch test for-merge" '
 	git fetch &&
 	test -f .git/refs/heads/two &&
 	test -f .git/refs/heads/one &&
-	master_in_two=`cd ../two && git rev-parse master` &&
-	one_in_two=`cd ../two && git rev-parse one` &&
+	master_in_two=$(cd ../two && git rev-parse master) &&
+	one_in_two=$(cd ../two && git rev-parse one) &&
 	{
-		echo "$master_in_two	not-for-merge"
 		echo "$one_in_two	"
+		echo "$master_in_two	not-for-merge"
 	} >expected &&
 	cut -f -2 .git/FETCH_HEAD >actual &&
 	test_cmp expected actual'
@@ -80,7 +88,7 @@ test_expect_success 'fetch --prune on its own works as expected' '
 	cd "$D" &&
 	git clone . prune &&
 	cd prune &&
-	git fetch origin refs/heads/master:refs/remotes/origin/extrabranch &&
+	git update-ref refs/remotes/origin/extrabranch master &&
 
 	git fetch --prune origin &&
 	test_must_fail git rev-parse origin/extrabranch
@@ -90,7 +98,7 @@ test_expect_success 'fetch --prune with a branch name keeps branches' '
 	cd "$D" &&
 	git clone . prune-branch &&
 	cd prune-branch &&
-	git fetch origin refs/heads/master:refs/remotes/origin/extrabranch &&
+	git update-ref refs/remotes/origin/extrabranch master &&
 
 	git fetch --prune origin master &&
 	git rev-parse origin/extrabranch
@@ -105,25 +113,65 @@ test_expect_success 'fetch --prune with a namespace keeps other namespaces' '
 	git rev-parse origin/master
 '
 
-test_expect_success 'fetch --prune --tags does not delete the remote-tracking branches' '
+test_expect_success 'fetch --prune handles overlapping refspecs' '
+	cd "$D" &&
+	git update-ref refs/pull/42/head master &&
+	git clone . prune-overlapping &&
+	cd prune-overlapping &&
+	git config --add remote.origin.fetch refs/pull/*/head:refs/remotes/origin/pr/* &&
+
+	git fetch --prune origin &&
+	git rev-parse origin/master &&
+	git rev-parse origin/pr/42 &&
+
+	git config --unset-all remote.origin.fetch &&
+	git config remote.origin.fetch refs/pull/*/head:refs/remotes/origin/pr/* &&
+	git config --add remote.origin.fetch refs/heads/*:refs/remotes/origin/* &&
+
+	git fetch --prune origin &&
+	git rev-parse origin/master &&
+	git rev-parse origin/pr/42
+'
+
+test_expect_success 'fetch --prune --tags prunes branches but not tags' '
 	cd "$D" &&
 	git clone . prune-tags &&
 	cd prune-tags &&
-	git fetch origin refs/heads/master:refs/tags/sometag &&
+	git tag sometag master &&
+	# Create what looks like a remote-tracking branch from an earlier
+	# fetch that has since been deleted from the remote:
+	git update-ref refs/remotes/origin/fake-remote master &&
 
 	git fetch --prune --tags origin &&
 	git rev-parse origin/master &&
-	test_must_fail git rev-parse somebranch
+	test_must_fail git rev-parse origin/fake-remote &&
+	git rev-parse sometag
 '
 
-test_expect_success 'fetch --prune --tags with branch does not delete other remote-tracking branches' '
+test_expect_success 'fetch --prune --tags with branch does not prune other things' '
 	cd "$D" &&
 	git clone . prune-tags-branch &&
 	cd prune-tags-branch &&
-	git fetch origin refs/heads/master:refs/remotes/origin/extrabranch &&
+	git tag sometag master &&
+	git update-ref refs/remotes/origin/extrabranch master &&
 
 	git fetch --prune --tags origin master &&
-	git rev-parse origin/extrabranch
+	git rev-parse origin/extrabranch &&
+	git rev-parse sometag
+'
+
+test_expect_success 'fetch --prune --tags with refspec prunes based on refspec' '
+	cd "$D" &&
+	git clone . prune-tags-refspec &&
+	cd prune-tags-refspec &&
+	git tag sometag master &&
+	git update-ref refs/remotes/origin/foo/otherbranch master &&
+	git update-ref refs/remotes/origin/extrabranch master &&
+
+	git fetch --prune --tags origin refs/heads/foo/*:refs/remotes/origin/foo/* &&
+	test_must_fail git rev-parse refs/remotes/origin/foo/otherbranch &&
+	git rev-parse origin/extrabranch &&
+	git rev-parse sometag
 '
 
 test_expect_success 'fetch tags when there is no tags' '
@@ -154,6 +202,36 @@ test_expect_success 'fetch following tags' '
 
 '
 
+test_expect_success 'fetch uses remote ref names to describe new refs' '
+	cd "$D" &&
+	git init descriptive &&
+	(
+		cd descriptive &&
+		git config remote.o.url .. &&
+		git config remote.o.fetch "refs/heads/*:refs/crazyheads/*" &&
+		git config --add remote.o.fetch "refs/others/*:refs/heads/*" &&
+		git fetch o
+	) &&
+	git tag -a -m "Descriptive tag" descriptive-tag &&
+	git branch descriptive-branch &&
+	git checkout descriptive-branch &&
+	echo "Nuts" >crazy &&
+	git add crazy &&
+	git commit -a -m "descriptive commit" &&
+	git update-ref refs/others/crazy HEAD &&
+	(
+		cd descriptive &&
+		git fetch o 2>actual &&
+		grep " -> refs/crazyheads/descriptive-branch$" actual |
+		test_i18ngrep "new branch" &&
+		grep " -> descriptive-tag$" actual |
+		test_i18ngrep "new tag" &&
+		grep " -> crazy$" actual |
+		test_i18ngrep "new ref"
+	) &&
+	git checkout master
+'
+
 test_expect_success 'fetch must not resolve short tag name' '
 
 	cd "$D" &&
@@ -166,7 +244,7 @@ test_expect_success 'fetch must not resolve short tag name' '
 
 '
 
-test_expect_success 'fetch must not resolve short remote name' '
+test_expect_success 'fetch can now resolve short remote name' '
 
 	cd "$D" &&
 	git update-ref refs/remotes/six/HEAD HEAD &&
@@ -175,8 +253,7 @@ test_expect_success 'fetch must not resolve short remote name' '
 	cd six &&
 	git init &&
 
-	test_must_fail git fetch .. six:six
-
+	git fetch .. six:six
 '
 
 test_expect_success 'create bundle 1' '
@@ -207,13 +284,7 @@ test_expect_success 'unbundle 1' '
 
 test_expect_success 'bundle 1 has only 3 files ' '
 	cd "$D" &&
-	(
-		while read x && test -n "$x"
-		do
-			:;
-		done
-		cat
-	) <bundle1 >bundle.pack &&
+	convert_bundle_to_pack <bundle1 >bundle.pack &&
 	git index-pack bundle.pack &&
 	test_bundle_object_count bundle.pack 3
 '
@@ -230,13 +301,7 @@ test_expect_success 'bundle does not prerequisite objects' '
 	git add file2 &&
 	git commit -m add.file2 file2 &&
 	git bundle create bundle3 -1 HEAD &&
-	(
-		while read x && test -n "$x"
-		do
-			:;
-		done
-		cat
-	) <bundle3 >bundle.pack &&
+	convert_bundle_to_pack <bundle3 >bundle.pack &&
 	git index-pack bundle.pack &&
 	test_bundle_object_count bundle.pack 3
 '
@@ -248,42 +313,6 @@ test_expect_success 'bundle should be able to create a full history' '
 	git bundle create bundle4 v1.0
 
 '
-
-! rsync --help > /dev/null 2> /dev/null &&
-say 'Skipping rsync tests because rsync was not found' || {
-test_expect_success 'fetch via rsync' '
-	git pack-refs &&
-	mkdir rsynced &&
-	(cd rsynced &&
-	 git init --bare &&
-	 git fetch "rsync:$(pwd)/../.git" master:refs/heads/master &&
-	 git gc --prune &&
-	 test $(git rev-parse master) = $(cd .. && git rev-parse master) &&
-	 git fsck --full)
-'
-
-test_expect_success 'push via rsync' '
-	mkdir rsynced2 &&
-	(cd rsynced2 &&
-	 git init) &&
-	(cd rsynced &&
-	 git push "rsync:$(pwd)/../rsynced2/.git" master) &&
-	(cd rsynced2 &&
-	 git gc --prune &&
-	 test $(git rev-parse master) = $(cd .. && git rev-parse master) &&
-	 git fsck --full)
-'
-
-test_expect_success 'push via rsync' '
-	mkdir rsynced3 &&
-	(cd rsynced3 &&
-	 git init) &&
-	git push --all "rsync:$(pwd)/rsynced3/.git" &&
-	(cd rsynced3 &&
-	 test $(git rev-parse master) = $(cd .. && git rev-parse master) &&
-	 git fsck --full)
-'
-}
 
 test_expect_success 'fetch with a non-applying branch.<name>.merge' '
 	git config branch.master.remote yeti &&
@@ -345,28 +374,74 @@ test_expect_success 'bundle should record HEAD correctly' '
 
 '
 
-test_expect_success 'explicit fetch should not update tracking' '
+test_expect_success 'mark initial state of origin/master' '
+	(
+		cd three &&
+		git tag base-origin-master refs/remotes/origin/master
+	)
+'
+
+test_expect_success 'explicit fetch should update tracking' '
 
 	cd "$D" &&
 	git branch -f side &&
 	(
 		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
 		o=$(git rev-parse --verify refs/remotes/origin/master) &&
 		git fetch origin master &&
 		n=$(git rev-parse --verify refs/remotes/origin/master) &&
-		test "$o" = "$n" &&
+		test "$o" != "$n" &&
 		test_must_fail git rev-parse --verify refs/remotes/origin/side
 	)
 '
 
-test_expect_success 'explicit pull should not update tracking' '
+test_expect_success 'explicit pull should update tracking' '
 
 	cd "$D" &&
 	git branch -f side &&
 	(
 		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
 		o=$(git rev-parse --verify refs/remotes/origin/master) &&
 		git pull origin master &&
+		n=$(git rev-parse --verify refs/remotes/origin/master) &&
+		test "$o" != "$n" &&
+		test_must_fail git rev-parse --verify refs/remotes/origin/side
+	)
+'
+
+test_expect_success 'explicit --refmap is allowed only with command-line refspec' '
+	cd "$D" &&
+	(
+		cd three &&
+		test_must_fail git fetch --refmap="*:refs/remotes/none/*"
+	)
+'
+
+test_expect_success 'explicit --refmap option overrides remote.*.fetch' '
+	cd "$D" &&
+	git branch -f side &&
+	(
+		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
+		o=$(git rev-parse --verify refs/remotes/origin/master) &&
+		git fetch --refmap="refs/heads/*:refs/remotes/other/*" origin master &&
+		n=$(git rev-parse --verify refs/remotes/origin/master) &&
+		test "$o" = "$n" &&
+		test_must_fail git rev-parse --verify refs/remotes/origin/side &&
+		git rev-parse --verify refs/remotes/other/master
+	)
+'
+
+test_expect_success 'explicitly empty --refmap option disables remote.*.fetch' '
+	cd "$D" &&
+	git branch -f side &&
+	(
+		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
+		o=$(git rev-parse --verify refs/remotes/origin/master) &&
+		git fetch --refmap="" origin master &&
 		n=$(git rev-parse --verify refs/remotes/origin/master) &&
 		test "$o" = "$n" &&
 		test_must_fail git rev-parse --verify refs/remotes/origin/side
@@ -379,11 +454,28 @@ test_expect_success 'configured fetch updates tracking' '
 	git branch -f side &&
 	(
 		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
 		o=$(git rev-parse --verify refs/remotes/origin/master) &&
 		git fetch origin &&
 		n=$(git rev-parse --verify refs/remotes/origin/master) &&
 		test "$o" != "$n" &&
 		git rev-parse --verify refs/remotes/origin/side
+	)
+'
+
+test_expect_success 'non-matching refspecs do not confuse tracking update' '
+	cd "$D" &&
+	git update-ref refs/odd/location HEAD &&
+	(
+		cd three &&
+		git update-ref refs/remotes/origin/master base-origin-master &&
+		git config --add remote.origin.fetch \
+			refs/odd/location:refs/remotes/origin/odd &&
+		o=$(git rev-parse --verify refs/remotes/origin/master) &&
+		git fetch origin master &&
+		n=$(git rev-parse --verify refs/remotes/origin/master) &&
+		test "$o" != "$n" &&
+		test_must_fail git rev-parse --verify refs/remotes/origin/odd
 	)
 '
 
@@ -434,14 +526,165 @@ test_expect_success 'fetch --dry-run' '
 '
 
 test_expect_success "should be able to fetch with duplicate refspecs" '
-        mkdir dups &&
-        cd dups &&
-        git init &&
-        git config branch.master.remote three &&
-        git config remote.three.url ../three/.git &&
-        git config remote.three.fetch +refs/heads/*:refs/remotes/origin/* &&
-        git config --add remote.three.fetch +refs/heads/*:refs/remotes/origin/* &&
-        git fetch three
+	mkdir dups &&
+	(
+		cd dups &&
+		git init &&
+		git config branch.master.remote three &&
+		git config remote.three.url ../three/.git &&
+		git config remote.three.fetch +refs/heads/*:refs/remotes/origin/* &&
+		git config --add remote.three.fetch +refs/heads/*:refs/remotes/origin/* &&
+		git fetch three
+	)
+'
+
+# configured prune tests
+
+set_config_tristate () {
+	# var=$1 val=$2
+	case "$2" in
+	unset)  test_unconfig "$1" ;;
+	*)	git config "$1" "$2" ;;
+	esac
+}
+
+test_configured_prune () {
+	fetch_prune=$1 remote_origin_prune=$2 cmdline=$3 expected=$4
+
+	test_expect_success "prune fetch.prune=$1 remote.origin.prune=$2${3:+ $3}; $4" '
+		# make sure a newbranch is there in . and also in one
+		git branch -f newbranch &&
+		(
+			cd one &&
+			test_unconfig fetch.prune &&
+			test_unconfig remote.origin.prune &&
+			git fetch &&
+			git rev-parse --verify refs/remotes/origin/newbranch
+		) &&
+
+		# now remove it
+		git branch -d newbranch &&
+
+		# then test
+		(
+			cd one &&
+			set_config_tristate fetch.prune $fetch_prune &&
+			set_config_tristate remote.origin.prune $remote_origin_prune &&
+
+			git fetch $cmdline &&
+			case "$expected" in
+			pruned)
+				test_must_fail git rev-parse --verify refs/remotes/origin/newbranch
+				;;
+			kept)
+				git rev-parse --verify refs/remotes/origin/newbranch
+				;;
+			esac
+		)
+	'
+}
+
+test_configured_prune unset unset ""		kept
+test_configured_prune unset unset "--no-prune"	kept
+test_configured_prune unset unset "--prune"	pruned
+
+test_configured_prune false unset ""		kept
+test_configured_prune false unset "--no-prune"	kept
+test_configured_prune false unset "--prune"	pruned
+
+test_configured_prune true  unset ""		pruned
+test_configured_prune true  unset "--prune"	pruned
+test_configured_prune true  unset "--no-prune"	kept
+
+test_configured_prune unset false ""		kept
+test_configured_prune unset false "--no-prune"	kept
+test_configured_prune unset false "--prune"	pruned
+
+test_configured_prune false false ""		kept
+test_configured_prune false false "--no-prune"	kept
+test_configured_prune false false "--prune"	pruned
+
+test_configured_prune true  false ""		kept
+test_configured_prune true  false "--prune"	pruned
+test_configured_prune true  false "--no-prune"	kept
+
+test_configured_prune unset true  ""		pruned
+test_configured_prune unset true  "--no-prune"	kept
+test_configured_prune unset true  "--prune"	pruned
+
+test_configured_prune false true  ""		pruned
+test_configured_prune false true  "--no-prune"	kept
+test_configured_prune false true  "--prune"	pruned
+
+test_configured_prune true  true  ""		pruned
+test_configured_prune true  true  "--prune"	pruned
+test_configured_prune true  true  "--no-prune"	kept
+
+test_expect_success 'all boundary commits are excluded' '
+	test_commit base &&
+	test_commit oneside &&
+	git checkout HEAD^ &&
+	test_commit otherside &&
+	git checkout master &&
+	test_tick &&
+	git merge otherside &&
+	ad=$(git log --no-walk --format=%ad HEAD) &&
+	git bundle create twoside-boundary.bdl master --since="$ad" &&
+	convert_bundle_to_pack <twoside-boundary.bdl >twoside-boundary.pack &&
+	pack=$(git index-pack --fix-thin --stdin <twoside-boundary.pack) &&
+	test_bundle_object_count .git/objects/pack/pack-${pack##pack	}.pack 3
+'
+
+test_expect_success 'fetch --prune prints the remotes url' '
+	git branch goodbye &&
+	git clone . only-prunes &&
+	git branch -D goodbye &&
+	(
+		cd only-prunes &&
+		git fetch --prune origin 2>&1 | head -n1 >../actual
+	) &&
+	echo "From ${D}/." >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'branchname D/F conflict resolved by --prune' '
+	git branch dir/file &&
+	git clone . prune-df-conflict &&
+	git branch -D dir/file &&
+	git branch dir &&
+	(
+		cd prune-df-conflict &&
+		git fetch --prune &&
+		git rev-parse origin/dir >../actual
+	) &&
+	git rev-parse dir >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'fetching a one-level ref works' '
+	test_commit extra &&
+	git reset --hard HEAD^ &&
+	git update-ref refs/foo extra &&
+	git init one-level &&
+	(
+		cd one-level &&
+		git fetch .. HEAD refs/foo
+	)
+'
+
+test_expect_success 'fetching with auto-gc does not lock up' '
+	write_script askyesno <<-\EOF &&
+	echo "$*" &&
+	false
+	EOF
+	git clone "file://$D" auto-gc &&
+	test_commit test2 &&
+	(
+		cd auto-gc &&
+		git config gc.autoPackLimit 1 &&
+		GIT_ASK_YESNO="$D/askyesno" git fetch >fetch.out 2>&1 &&
+		! grep "Should I try again" fetch.out
+	)
 '
 
 test_done
